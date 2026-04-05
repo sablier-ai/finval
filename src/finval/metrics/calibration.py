@@ -172,14 +172,23 @@ def compute_crps(
                 if np.isnan(y) or np.any(np.isnan(x)):
                     continue
 
-                # O(n log n) CRPS: sort samples, then use closed-form formula.
-                # CRPS = E|X - y| - 0.5 * E|X - X'|
-                # E|X - X'| = (2 / n^2) * sum_{i=1..n} (2i - n - 1) * x_(i)
+                # O(n log n) CRPS via the "fair" (unbiased) sorted-sample formula
+                # of Zamo & Naveau (2018). For X_1..X_n i.i.d. from the forecast,
+                #   CRPS = E|X - y| - 0.5 * E|X - X'|
+                # The unbiased estimator of E|X - X'| from n samples excludes the
+                # i = j diagonal and divides by n(n-1):
+                #   E|X - X'| ~ (2 / (n(n-1))) * sum_{i=1..n} (2i - n - 1) * x_(i)
+                # This matches the `properscoring` package and the backend
+                # implementation. The biased /n^2 version overestimates CRPS by
+                # ~1/n which matters for small sample counts.
                 xs = np.sort(x)
                 n = len(xs)
                 term1 = float(np.mean(np.abs(xs - y)))
-                weights = 2 * np.arange(1, n + 1) - n - 1
-                term2 = float(2.0 * np.sum(weights * xs) / (n * n))
+                if n > 1:
+                    weights = 2 * np.arange(1, n + 1) - n - 1
+                    term2 = float(2.0 * np.sum(weights * xs) / (n * (n - 1)))
+                else:
+                    term2 = 0.0
                 crps = max(0.0, term1 - 0.5 * term2)
                 feature_crps.append(crps)
 
