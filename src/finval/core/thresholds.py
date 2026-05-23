@@ -32,6 +32,12 @@ DISTRIBUTION_THRESHOLDS: dict[str, dict[str, float]] = {
     "tail_quantiles": {"excellent": 0.10, "good": 0.20, "acceptable": 0.35},
     # Excess kurtosis error (diagnostic only — unstable).
     "tail_heaviness": {"excellent": 1.0, "good": 2.0, "acceptable": 4.0},
+    # Hill tail-index error |xi_syn - xi_real| (mean across feature x side).
+    # SPY-like xi ~ 0.25-0.40; an error of 0.05 is "match within 15-20%".
+    "hill_tail_index": {"excellent": 0.05, "good": 0.10, "acceptable": 0.20},
+    # Sliced Wasserstein-p (default p=2), normalized by mean real std.
+    # Same thresholds as energy_distance for cross-metric comparability.
+    "sliced_wasserstein": {"excellent": 0.10, "good": 0.20, "acceptable": 0.40},
 }
 
 # ---------------------------------------------------------------------------
@@ -176,6 +182,8 @@ METRIC_CATEGORY: dict[str, str] = {
     "energy_distance": "distribution",
     "tail_quantiles": "distribution",
     "tail_heaviness": "distribution",
+    "hill_tail_index": "distribution",
+    "sliced_wasserstein": "distribution",
     # Dependence
     "pearson_corr": "dependence",
     "spearman_corr": "dependence",
@@ -213,9 +221,11 @@ CATEGORY_WEIGHTS: dict[str, float] = {
 # Metric weight within its category (sums to ~1 per category)
 METRIC_WEIGHTS_IN_CATEGORY: dict[str, float] = {
     # Distribution (15% total)
-    "marginal_ks": 0.45,
-    "energy_distance": 0.30,
-    "tail_quantiles": 0.25,
+    "marginal_ks": 0.30,
+    "energy_distance": 0.20,
+    "tail_quantiles": 0.20,
+    "hill_tail_index": 0.15,
+    "sliced_wasserstein": 0.15,
     # Dependence (25% total)
     "pearson_corr": 0.22,
     "spearman_corr": 0.13,

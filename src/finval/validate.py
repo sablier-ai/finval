@@ -33,7 +33,9 @@ from finval.metrics.dependence import (
 )
 from finval.metrics.distribution import (
     compute_energy_distance,
+    compute_hill_tail_index,
     compute_marginal_ks,
+    compute_sliced_wasserstein,
     compute_tail_heaviness,
     compute_tail_quantiles,
 )
@@ -53,6 +55,8 @@ FLAT_METRICS = (
     "marginal_ks",
     "energy_distance",
     "tail_quantiles",
+    "hill_tail_index",
+    "sliced_wasserstein",
     "pearson_corr",
     "spearman_corr",
     "copula_distance",
@@ -95,6 +99,10 @@ def _run_flat_metrics(
         results["energy_distance"] = compute_energy_distance(synthetic, real, feature_names)
     if "tail_quantiles" in include:
         results["tail_quantiles"] = compute_tail_quantiles(synthetic, real, feature_names)
+    if "hill_tail_index" in include:
+        results["hill_tail_index"] = compute_hill_tail_index(synthetic, real, feature_names)
+    if "sliced_wasserstein" in include:
+        results["sliced_wasserstein"] = compute_sliced_wasserstein(synthetic, real, feature_names)
     if synthetic.shape[1] >= 2:
         if "pearson_corr" in include:
             results["pearson_corr"] = compute_pearson_correlation(synthetic, real, feature_names)

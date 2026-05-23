@@ -30,7 +30,9 @@ from finval.metrics.dependence import (
 )
 from finval.metrics.distribution import (
     compute_energy_distance,
+    compute_hill_tail_index,
     compute_marginal_ks,
+    compute_sliced_wasserstein,
     compute_tail_heaviness,
     compute_tail_quantiles,
 )
@@ -48,6 +50,8 @@ __all__ = [
     "compute_energy_distance",
     "compute_tail_quantiles",
     "compute_tail_heaviness",
+    "compute_hill_tail_index",
+    "compute_sliced_wasserstein",
     # Dependence
     "compute_pearson_correlation",
     "compute_spearman_correlation",
