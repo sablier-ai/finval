@@ -1,15 +1,21 @@
 """Validation metrics for synthetic financial time series.
 
-Each metric is a pure function of (synthetic, real) arrays that returns
-a MetricResult. Metrics are organized by what they measure:
+Most metrics are pure functions of (synthetic, real) arrays and return
+a MetricResult. The ``backtest`` module is the exception — its inputs
+are strategy returns / IS-OOS matrices, since backtest-overfitting is
+a property of the *selection procedure*, not the synthetic generator.
+
+Categories:
 
 - distribution: marginal and joint distribution fidelity
 - dependence: cross-feature dependence structure (including tails)
 - temporal: autocorrelation and volatility dynamics
 - calibration: probabilistic forecast calibration
 - paths: path-level properties (drawdowns, etc.)
+- backtest: deflated Sharpe + probability of backtest overfitting
 """
 
+from finval.metrics.backtest import compute_deflated_sharpe, compute_pbo
 from finval.metrics.calibration import (
     compute_coverage,
     compute_crps,
@@ -59,4 +65,7 @@ __all__ = [
     "compute_coverage",
     # Paths
     "compute_drawdown_distribution",
+    # Backtest
+    "compute_deflated_sharpe",
+    "compute_pbo",
 ]

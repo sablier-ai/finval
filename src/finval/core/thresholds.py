@@ -95,6 +95,23 @@ PATH_THRESHOLDS: dict[str, dict[str, float]] = {
 }
 
 # ---------------------------------------------------------------------------
+# BACKTEST-OVERFITTING METRICS
+# ---------------------------------------------------------------------------
+
+BACKTEST_THRESHOLDS: dict[str, dict[str, float]] = {
+    # 1 - DSR_probability. A strategy whose Sharpe is "real" gets
+    # DSR ~ 1, so 1 - DSR ~ 0. Conventional inference cutoffs:
+    #   1 - DSR < 0.05 = "significant at 5%" -> excellent
+    #   < 0.10 -> good (10% significance)
+    #   < 0.30 -> acceptable (weakly significant, common in OOS work)
+    "deflated_sharpe": {"excellent": 0.05, "good": 0.10, "acceptable": 0.30},
+    # Probability of backtest overfitting via CSCV. PBO ~ 0 means the
+    # selection procedure is not overfitting; PBO ~ 0.5 is what a
+    # random selector would produce; PBO > 0.5 is worse than random.
+    "pbo": {"excellent": 0.25, "good": 0.40, "acceptable": 0.55},
+}
+
+# ---------------------------------------------------------------------------
 # CONSOLIDATED DEFAULTS
 # ---------------------------------------------------------------------------
 
@@ -104,6 +121,7 @@ DEFAULT_THRESHOLDS: dict[str, dict[str, float]] = {
     **TEMPORAL_THRESHOLDS,
     **CALIBRATION_THRESHOLDS,
     **PATH_THRESHOLDS,
+    **BACKTEST_THRESHOLDS,
 }
 
 
@@ -178,6 +196,9 @@ METRIC_CATEGORY: dict[str, str] = {
     "crps": "calibration",
     # Path-level
     "drawdown_distribution": "path",
+    # Backtest-overfitting
+    "deflated_sharpe": "backtest",
+    "pbo": "backtest",
 }
 
 # Relative importance of each category within the overall score
