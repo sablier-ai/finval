@@ -46,9 +46,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sablier-it/finval"
-Repository = "https://github.com/sablier-it/finval"
-Issues = "https://github.com/sablier-it/finval/issues"
+Homepage = "https://github.com/sablier-ai/finval"
+Repository = "https://github.com/sablier-ai/finval"
+Issues = "https://github.com/sablier-ai/finval/issues"
 
 [build-system]
 requires = ["hatchling"]

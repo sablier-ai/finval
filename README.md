@@ -9,7 +9,7 @@ clustering, leverage effect, crash co-movement, and probabilistic
 forecast calibration.
 
 `finval` is the scoring backend behind
-**[FinBench](https://github.com/sablier-it/finbench)**, the public
+**[FinBench](https://github.com/sablier-ai/finbench)**, the public
 leaderboard for multivariate financial time-series generation.
 
 > ⚠️ **Beta.** The library is in active use (57 tests, FinBench
