@@ -8,7 +8,13 @@ covers the financial stylized facts that matter: fat tails, volatility
 clustering, leverage effect, crash co-movement, and probabilistic
 forecast calibration.
 
-> ⚠️ **Alpha.** The API may still change. Feedback welcome.
+`finval` is the scoring backend behind
+**[FinBench](https://github.com/sablier-it/finbench)**, the public
+leaderboard for multivariate financial time-series generation.
+
+> ⚠️ **Beta.** The library is in active use (57 tests, FinBench
+> production scoring) but the public API may still evolve in minor
+> versions. Pin to `finval==0.1.x` if you need API stability.
 
 ## Why finval?
 
@@ -19,9 +25,10 @@ dependence coefficients. For financial applications — risk management,
 backtesting, derivatives — you need a suite that tests the things that
 actually matter for market data.
 
-`finval` ships 19 metrics across 5 categories, each with thresholds
-calibrated against real financial data and justified by the statistical
-literature.
+`finval` ships **17 metric functions** producing **20 numeric scores**
+across 5 categories (the calibration `coverage_50 / 90 / 95` come from
+a single function), each with thresholds calibrated against real
+financial data and justified by the statistical literature.
 
 ## Installation
 
