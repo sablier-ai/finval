@@ -130,8 +130,20 @@ class ValidationReport:
 
     @property
     def overall_score(self) -> float:
-        """Weighted average of metric scores. Weights for missing metrics
-        contribute zero, which penalizes incomplete validation runs."""
+        """Weighted average of metric scores.
+
+        The public APIs (``validate``, ``validate_paths``,
+        ``validate_calibration``) filter ``weights`` to only the
+        metrics that actually ran, so the denominator is always
+        self-consistent with the numerator — no silent zero-fill
+        penalty for metrics that don't apply to the input shape.
+
+        If a caller constructs a ``ValidationReport`` directly with
+        ``weights`` for metrics not present in ``metrics``, those
+        weights still contribute to the denominator with zero score.
+        That behavior is intentional for incomplete-run detection but
+        only applies when bypassing the public APIs.
+        """
         if not self.metrics or not self.weights:
             return 0.0
         total_weight = sum(self.weights.values())

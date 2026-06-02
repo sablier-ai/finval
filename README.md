@@ -25,10 +25,28 @@ dependence coefficients. For financial applications — risk management,
 backtesting, derivatives — you need a suite that tests the things that
 actually matter for market data.
 
-`finval` ships **17 metric functions** producing **20 numeric scores**
-across 5 categories (the calibration `coverage_50 / 90 / 95` come from
-a single function), each with thresholds calibrated against real
-financial data and justified by the statistical literature.
+`finval` ships **19 weighted metrics** across 5 categories, each with
+thresholds calibrated against real financial data and justified by the
+statistical literature. The 19 split across three input shapes:
+
+- **9 distributional metrics** (`marginal_ks`, `energy_distance`,
+  `tail_quantiles`, `pearson_corr`, `spearman_corr`, `copula_distance`,
+  `tail_dependence_upper`, `tail_dependence_lower`,
+  `correlation_breakdown`) — run by `validate(...)` on 2D flat data.
+- **5 path-level metrics** (`acf_returns`, `volatility_clustering`,
+  `leverage_effect`, `cross_correlation`, `drawdown_distribution`) —
+  run by `validate_paths(...)` alongside the 9 distributional ones, on
+  3D sample paths (so `validate_paths` produces **14** scores total).
+- **5 calibration metrics** (`pit_uniformity`, `crps`, `coverage_50`,
+  `coverage_90`, `coverage_95`) — run by `validate_calibration(...)` on
+  per-observation forecast distributions paired with realized actuals.
+
+Implementation note: the 19 metrics come from **17 underlying compute
+functions** producing **20 individual numeric outputs** —
+`compute_tail_dependence` returns upper + lower (2 scores) and
+`compute_coverage` returns the three levels (3 scores). One additional
+diagnostic metric (`tail_heaviness`) is computed and reported but not
+weighted into `overall_score`.
 
 ## Installation
 
