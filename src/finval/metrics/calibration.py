@@ -265,6 +265,7 @@ def compute_coverage(
 
         per_feature_coverage: dict[str, float] = {}
         all_coverage: list[float] = []
+        per_feature_error: list[float] = []
 
         for i, name in enumerate(names):
             hits: list[int] = []
@@ -281,6 +282,7 @@ def compute_coverage(
                 cov = float(np.mean(hits))
                 per_feature_coverage[name] = cov
                 all_coverage.append(cov)
+                per_feature_error.append(abs(cov - level))
 
         if not all_coverage:
             return create_error_metric(
@@ -288,7 +290,12 @@ def compute_coverage(
             )
 
         mean_cov = float(np.mean(all_coverage))
-        error = float(abs(mean_cov - level))
+        # Score on the MEAN of per-feature absolute coverage errors — NOT
+        # |mean_coverage - level|. Averaging coverage across features first lets
+        # an over-covering feature (+0.1) and an under-covering feature (-0.1)
+        # cancel to a perfect-looking 0 error while both are miscalibrated. The
+        # mean-abs-error penalises each feature's miscalibration honestly.
+        error = float(np.mean(per_feature_error))
 
         metric_name = f"coverage_{int(level*100)}"
         th = thresholds or CALIBRATION_THRESHOLDS[metric_name]

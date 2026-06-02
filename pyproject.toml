@@ -1,6 +1,6 @@
 [project]
 name = "finval"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rigorous validation for synthetic financial time series"
 readme = "README.md"
 license = { text = "MIT" }

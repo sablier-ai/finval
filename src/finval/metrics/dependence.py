@@ -24,6 +24,44 @@ from finval.core.thresholds import DEPENDENCE_THRESHOLDS, quality_from_value
 logger = logging.getLogger(__name__)
 
 
+def _correlation_matrix(x: np.ndarray, method: str) -> np.ndarray:
+    """Correlation matrix, robust to NaNs.
+
+    Fast path (no NaNs present): whole-matrix ``np.corrcoef`` / ``spearmanr`` —
+    identical numbers to before, so clean-data results are unchanged. When any
+    NaN is present, fall back to **pairwise-complete** estimation (mask each
+    pair's missing rows independently) so a single ragged feature with a short
+    history doesn't poison the whole correlation row. Pairs with <10 overlapping
+    finite observations (or a non-finite estimate) contribute rho=0.
+    """
+    if method not in ("pearson", "spearman"):
+        raise ValueError(f"unknown method {method!r}")
+    n_features = x.shape[1]
+
+    if not np.isnan(x).any():
+        if method == "pearson":
+            return np.asarray(np.corrcoef(x, rowvar=False))
+        corr, _ = stats.spearmanr(x)
+        if n_features == 2:
+            corr = np.array([[1.0, corr], [corr, 1.0]])
+        return np.asarray(corr)
+
+    corr_fn = stats.pearsonr if method == "pearson" else stats.spearmanr
+    c = np.eye(n_features)
+    for i in range(n_features):
+        for j in range(i + 1, n_features):
+            xi, xj = x[:, i], x[:, j]
+            m = ~(np.isnan(xi) | np.isnan(xj))
+            if int(m.sum()) < 10:
+                rho = 0.0
+            else:
+                rho = float(corr_fn(xi[m], xj[m])[0])
+                if not np.isfinite(rho):
+                    rho = 0.0
+            c[i, j] = c[j, i] = rho
+    return c
+
+
 def _pairwise_correlation_error(
     synthetic: np.ndarray,
     real: np.ndarray,
@@ -32,17 +70,8 @@ def _pairwise_correlation_error(
     """Helper: compute mean and max pairwise correlation error."""
     n_features = synthetic.shape[1]
 
-    if method == "pearson":
-        syn_corr = np.corrcoef(synthetic, rowvar=False)
-        real_corr = np.corrcoef(real, rowvar=False)
-    elif method == "spearman":
-        syn_corr, _ = stats.spearmanr(synthetic)
-        real_corr, _ = stats.spearmanr(real)
-        if n_features == 2:
-            syn_corr = np.array([[1.0, syn_corr], [syn_corr, 1.0]])
-            real_corr = np.array([[1.0, real_corr], [real_corr, 1.0]])
-    else:
-        raise ValueError(f"unknown method {method!r}")
+    syn_corr = _correlation_matrix(synthetic, method)
+    real_corr = _correlation_matrix(real, method)
 
     mask = ~np.eye(n_features, dtype=bool)
     errors = np.abs(syn_corr - real_corr)[mask]
@@ -169,27 +198,39 @@ def compute_copula_distance(
         per_pair: dict[str, float] = {}
         errors: list[float] = []
 
-        for i in range(n_features):
-            for j in range(i + 1, n_features):
-                syn_pair = syn_u[:, [i, j]]
-                real_pair = real_u[:, [i, j]]
+        # Copula distance is O(n_pairs * grid_size^2); at large universes
+        # (F=1000 -> ~500k pairs) full enumeration is intractable. Subsample a
+        # fixed, seeded set of pairs so the metric scales without losing
+        # determinism. (Mirrors the engine's MAX_PAIRS cap.)
+        MAX_PAIRS = 5000
+        all_pairs = [(i, j) for i in range(n_features) for j in range(i + 1, n_features)]
+        if len(all_pairs) > MAX_PAIRS:
+            rng = np.random.RandomState(42)
+            sel = rng.choice(len(all_pairs), size=MAX_PAIRS, replace=False)
+            pair_list = [all_pairs[k] for k in sel]
+        else:
+            pair_list = all_pairs
 
-                syn_c = np.array(
-                    [
-                        np.mean((syn_pair[:, 0] <= u) & (syn_pair[:, 1] <= v))
-                        for u, v in zip(u_flat, v_flat, strict=False)
-                    ]
-                )
-                real_c = np.array(
-                    [
-                        np.mean((real_pair[:, 0] <= u) & (real_pair[:, 1] <= v))
-                        for u, v in zip(u_flat, v_flat, strict=False)
-                    ]
-                )
+        for i, j in pair_list:
+            syn_pair = syn_u[:, [i, j]]
+            real_pair = real_u[:, [i, j]]
 
-                dist = float(np.sqrt(np.mean((syn_c - real_c) ** 2)))
-                per_pair[f"{i}<->{j}"] = dist
-                errors.append(dist)
+            syn_c = np.array(
+                [
+                    np.mean((syn_pair[:, 0] <= u) & (syn_pair[:, 1] <= v))
+                    for u, v in zip(u_flat, v_flat, strict=False)
+                ]
+            )
+            real_c = np.array(
+                [
+                    np.mean((real_pair[:, 0] <= u) & (real_pair[:, 1] <= v))
+                    for u, v in zip(u_flat, v_flat, strict=False)
+                ]
+            )
+
+            dist = float(np.sqrt(np.mean((syn_c - real_c) ** 2)))
+            per_pair[f"{i}<->{j}"] = dist
+            errors.append(dist)
 
         mean_err = float(np.mean(errors)) if errors else 0.0
         max_err = float(np.max(errors)) if errors else 0.0

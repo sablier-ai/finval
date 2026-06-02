@@ -18,7 +18,7 @@ For path-level validation with drawdowns and calibration:
 from finval.core.result import MetricResult, ValidationReport
 from finval.validate import validate, validate_paths
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "MetricResult",
