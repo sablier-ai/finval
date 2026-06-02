@@ -1,0 +1,73 @@
+name: release
+
+# Publish finval to PyPI on a version tag, using PyPI Trusted Publishing (OIDC).
+# There is NO API token anywhere — GitHub presents a short-lived OIDC identity to
+# PyPI, which mints a one-time, project-scoped upload credential at publish time.
+#
+# ONE-TIME SETUP on PyPI (https://pypi.org/manage/project/finval/settings/publishing/):
+#   add a Trusted Publisher with:
+#     Owner:               sablier-ai
+#     Repository name:     finval
+#     Workflow name:       release.yml
+#     Environment:         (leave blank — this workflow uses none)
+#
+# Then release by tagging:  git tag vX.Y.Z && git push origin vX.Y.Z
+# (the tag MUST match the version in pyproject.toml — the build job enforces it).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify tag matches pyproject version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          echo "tag=$TAG  pyproject=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag '$TAG' does not match pyproject version '$PKG'"
+            exit 1
+          fi
+
+      - name: Build + check
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI (OIDC, token-free)
+    needs: build
+    runs-on: ubuntu-latest
+    # The keyless credential: id-token lets PyPI verify this workflow's identity.
+    # (Add `environment: pypi` here + scope the Trusted Publisher to it for a
+    # manual approval gate before each publish — optional hardening.)
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
