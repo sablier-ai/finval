@@ -28,7 +28,11 @@ from finval.metrics.distribution import (
     compute_tail_heaviness,
     compute_tail_quantiles,
 )
-from finval.metrics.paths import compute_drawdown_distribution
+from finval.metrics.paths import (
+    compute_drawdown_distribution,
+    compute_memorization,
+    compute_regime_conditional,
+)
 from finval.metrics.temporal import (
     compute_acf_returns,
     compute_cross_correlation,
@@ -59,4 +63,8 @@ __all__ = [
     "compute_coverage",
     # Paths
     "compute_drawdown_distribution",
+    # Conditional
+    "compute_regime_conditional",
+    # Memorization
+    "compute_memorization",
 ]

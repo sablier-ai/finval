@@ -37,7 +37,11 @@ from finval.metrics.distribution import (
     compute_tail_heaviness,
     compute_tail_quantiles,
 )
-from finval.metrics.paths import compute_drawdown_distribution
+from finval.metrics.paths import (
+    compute_drawdown_distribution,
+    compute_memorization,
+    compute_regime_conditional,
+)
 from finval.metrics.temporal import (
     compute_acf_returns,
     compute_cross_correlation,
@@ -68,6 +72,8 @@ PATH_METRICS = (
     "leverage_effect",
     "cross_correlation",
     "drawdown_distribution",
+    "regime_conditional",
+    "memorization",
 )
 
 # Metrics that require per-observation forecast samples
@@ -143,6 +149,14 @@ def _run_path_metrics(
         )
     if "drawdown_distribution" in include:
         results["drawdown_distribution"] = compute_drawdown_distribution(
+            synthetic_paths, real_paths, feature_names
+        )
+    if synthetic_paths.shape[2] >= 1 and "regime_conditional" in include:
+        results["regime_conditional"] = compute_regime_conditional(
+            synthetic_paths, real_paths, feature_names
+        )
+    if "memorization" in include:
+        results["memorization"] = compute_memorization(
             synthetic_paths, real_paths, feature_names
         )
 

@@ -62,8 +62,35 @@ class MetricResult:
 
     @property
     def score(self) -> float:
-        """Numeric score in [0, 1] for weighted aggregation."""
-        return QUALITY_SCORES[self.quality]
+        """Continuous, severity-aware score in [0, 1] for weighted aggregation.
+
+        v0.3.0 de-quantization. Earlier versions collapsed ``value`` onto the
+        four grade scores {1.0, 0.75, 0.5, 0.0}, discarding ALL within-grade
+        severity — e.g. a ``tail_quantiles`` of 0.351 and 5.0 both scored 0.0,
+        and 0.582 (66% past the gate) scored the same as 0.351. That made the
+        scalar blind to exactly the failures it should penalize most and gave
+        the research archive nothing to rank on inside a grade.
+
+        This maps ``value`` continuously through the excellent/good/acceptable
+        thresholds (lower is always better): piecewise-linear with knots
+        (0→1.0, excellent→0.9, good→0.7, acceptable→0.5), then a smooth
+        exponential decay toward 0 beyond the acceptable gate so severity keeps
+        registering. Falls back to the discrete grade map when thresholds are
+        absent or non-standard, so non-monotone/custom metrics are unaffected.
+        """
+        if self.value is None or not np.isfinite(self.value):
+            return 0.0
+        th = self.thresholds
+        if not th or any(k not in th for k in ("excellent", "good", "acceptable")):
+            return QUALITY_SCORES[self.quality]
+        e, g, a = float(th["excellent"]), float(th["good"]), float(th["acceptable"])
+        if not (0.0 <= e < g < a):  # non-standard ordering — don't guess
+            return QUALITY_SCORES[self.quality]
+        v = float(self.value)
+        if v <= a:
+            return float(np.interp(v, [0.0, e, g, a], [1.0, 0.9, 0.7, 0.5]))
+        scale = max(a - e, 1e-9)  # severity decay length set by the metric's own band
+        return float(0.5 * np.exp(-(v - a) / scale))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict (JSON-safe)."""

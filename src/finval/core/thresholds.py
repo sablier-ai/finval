@@ -94,6 +94,23 @@ PATH_THRESHOLDS: dict[str, dict[str, float]] = {
     "drawdown_distribution": {"excellent": 0.10, "good": 0.20, "acceptable": 0.35},
 }
 
+# v0.3.0: the conditional axis — the only metric that is regime-conditional rather
+# than pooled. value = within-regime energy distance (stress-weighted) + 0.5*mass
+# error. Thresholds calibrated against the model corpus (see FINVAL_V2_DECISION.md).
+CONDITIONAL_THRESHOLDS: dict[str, dict[str, float]] = {
+    # Calibrated on the model corpus: real-vs-real = 0; FLOW/GARCH/DCC ~0.23-0.30
+    # ("good" — they get within-regime shape right but under-produce stress ~10x, so
+    # not "excellent"); regime-collapsing deep-gen models (zero high-vol paths) ~1-3.5
+    # ("poor"). No current model earns "excellent" — that needs the stress FREQUENCY right.
+    "regime_conditional": {"excellent": 0.20, "good": 0.45, "acceptable": 0.75},
+}
+
+# v0.3.0: memorization / data-copying. value = max(0, 1 - synth/real NN-distance
+# ratio); 0 = generalizing (synth NN distances ~ real NN distances), → 1 = copying.
+MEMORIZATION_THRESHOLDS: dict[str, dict[str, float]] = {
+    "memorization": {"excellent": 0.10, "good": 0.25, "acceptable": 0.50},
+}
+
 # ---------------------------------------------------------------------------
 # CONSOLIDATED DEFAULTS
 # ---------------------------------------------------------------------------
@@ -104,6 +121,8 @@ DEFAULT_THRESHOLDS: dict[str, dict[str, float]] = {
     **TEMPORAL_THRESHOLDS,
     **CALIBRATION_THRESHOLDS,
     **PATH_THRESHOLDS,
+    **CONDITIONAL_THRESHOLDS,
+    **MEMORIZATION_THRESHOLDS,
 }
 
 
@@ -178,29 +197,42 @@ METRIC_CATEGORY: dict[str, str] = {
     "crps": "calibration",
     # Path-level
     "drawdown_distribution": "path",
+    # Conditional (regime-conditional, not pooled) — v0.3.0
+    "regime_conditional": "conditional",
+    # Memorization / generalization — v0.3.0
+    "memorization": "memorization",
 }
 
 # Relative importance of each category within the overall score
+# v0.3.0: distribution lifted 0.15->0.20 so extreme-quantile fidelity (the
+# failure a derivatives book prices on, and which de-quantization now makes
+# legible) carries real weight; temporal/calibration trimmed to compensate.
+# v0.3.0: + the `conditional` axis (regime-conditional fidelity — the measured
+# option-pricing gap). Its 0.12 is pulled from calibration/temporal/path; the
+# distribution lift and dependence (tail bump) are preserved.
 CATEGORY_WEIGHTS: dict[str, float] = {
-    "distribution": 0.15,
+    "distribution": 0.20,
     "dependence": 0.25,
-    "temporal": 0.20,
-    "calibration": 0.30,
-    "path": 0.10,
+    "temporal": 0.15,
+    "calibration": 0.15,
+    "path": 0.08,
+    "conditional": 0.12,
+    "memorization": 0.05,
 }
 
 # Metric weight within its category (sums to ~1 per category)
 METRIC_WEIGHTS_IN_CATEGORY: dict[str, float] = {
-    # Distribution (15% total)
-    "marginal_ks": 0.45,
-    "energy_distance": 0.30,
-    "tail_quantiles": 0.25,
-    # Dependence (25% total)
-    "pearson_corr": 0.22,
-    "spearman_corr": 0.13,
-    "copula_distance": 0.25,
-    "tail_dependence_upper": 0.10,
-    "tail_dependence_lower": 0.20,  # crash co-movement — critical for risk
+    # Distribution (20% total) — v0.3.0: tail_quantiles 0.25->0.40 (extreme
+    # quantile fidelity is the hard part everyone fails and what options price on)
+    "marginal_ks": 0.35,
+    "energy_distance": 0.25,
+    "tail_quantiles": 0.40,
+    # Dependence (25% total) — v0.3.0: both tail_dependence (crash co-movement) bumped
+    "pearson_corr": 0.20,
+    "spearman_corr": 0.12,
+    "copula_distance": 0.24,
+    "tail_dependence_upper": 0.12,
+    "tail_dependence_lower": 0.22,  # crash co-movement — critical for risk
     "correlation_breakdown": 0.10,
     # Temporal (20% total)
     "acf_returns": 0.35,
@@ -213,8 +245,12 @@ METRIC_WEIGHTS_IN_CATEGORY: dict[str, float] = {
     "coverage_95": 0.10,
     "pit_uniformity": 0.25,
     "crps": 0.25,
-    # Path (10% total)
+    # Path (8% total)
     "drawdown_distribution": 1.0,
+    # Conditional (12% total) — v0.3.0
+    "regime_conditional": 1.0,
+    # Memorization (5% total) — v0.3.0
+    "memorization": 1.0,
 }
 
 
