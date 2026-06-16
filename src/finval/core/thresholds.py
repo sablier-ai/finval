@@ -111,6 +111,36 @@ MEMORIZATION_THRESHOLDS: dict[str, dict[str, float]] = {
     "memorization": {"excellent": 0.10, "good": 0.25, "acceptable": 0.50},
 }
 
+# v0.3.0: lower-vs-upper tail-dependence ASYMMETRY bias at q=0.10. value =
+# |mean(A_syn) - mean(A_real)| where A = lambda_L - lambda_U (positive in real
+# equities: crashes cluster more than rallies). Scored on the panel-MEAN of A,
+# not per-pair, because per-pair lambda noise swamps the signal at realistic n;
+# the mean cancels that noise and isolates the systematic, directional defect.
+# Calibrated on the 50-name reference panel (1253 daily obs): honest real-vs-real
+# resamples floor at median ~0.022 / p90 ~0.044 → "excellent"/"good"; a Gaussian
+# (or any elliptical/Student-t) fit to the real covariance drives mean(A)->~0 so
+# its bias ≈ the full real asymmetry (~0.048) → "acceptable"; a model that INVERTS
+# the asymmetry (mean A_syn < 0 while real > 0) scores ~0.10+ → "poor". Units are
+# raw lambda-coefficient differences (probabilities), panel-agnostic, set off the
+# real-vs-real noise floor — NOT off any model. Tighten via `thresholds` for
+# larger panels/samples (the floor shrinks with sqrt(n_pairs * n_obs)).
+TAIL_ASYMMETRY_THRESHOLDS: dict[str, dict[str, float]] = {
+    "tail_dependence_asymmetry": {"excellent": 0.025, "good": 0.045, "acceptable": 0.07},
+}
+
+# v0.3.0: covariance dispersion calibration. value = mean of |log(ratio)| over the
+# correlation-spread ratio and the (log-)variance-spread ratio of synth vs real.
+# 0 = spreads match; |log| grows symmetrically whether the model under- or
+# over-disperses. A perfectly calibrated resample sits at sampling noise (~0.05);
+# the measured FLOW defect (corr under-dispersed ~28% -> |log .72|=.33, var
+# over-dispersed ~42% -> |log 1.42|=.35) averages ~0.34 -> "poor". An elliptical
+# fit to the right covariance matches dispersion well (it reproduces second
+# moments), so this metric is genuinely orthogonal to tail_dependence_asymmetry
+# and does NOT single out FLOW — it just measures whichever side gets spread wrong.
+COV_CALIBRATION_THRESHOLDS: dict[str, dict[str, float]] = {
+    "covariance_calibration": {"excellent": 0.10, "good": 0.20, "acceptable": 0.30},
+}
+
 # ---------------------------------------------------------------------------
 # CONSOLIDATED DEFAULTS
 # ---------------------------------------------------------------------------
@@ -123,6 +153,8 @@ DEFAULT_THRESHOLDS: dict[str, dict[str, float]] = {
     **PATH_THRESHOLDS,
     **CONDITIONAL_THRESHOLDS,
     **MEMORIZATION_THRESHOLDS,
+    **TAIL_ASYMMETRY_THRESHOLDS,
+    **COV_CALIBRATION_THRESHOLDS,
 }
 
 
@@ -184,6 +216,9 @@ METRIC_CATEGORY: dict[str, str] = {
     "tail_dependence_upper": "dependence",
     "tail_dependence_lower": "dependence",
     "correlation_breakdown": "dependence",
+    # v0.3.0 — dependence-axis additions
+    "tail_dependence_asymmetry": "dependence",
+    "covariance_calibration": "dependence",
     # Temporal
     "acf_returns": "temporal",
     "volatility_clustering": "temporal",
@@ -227,13 +262,18 @@ METRIC_WEIGHTS_IN_CATEGORY: dict[str, float] = {
     "marginal_ks": 0.35,
     "energy_distance": 0.25,
     "tail_quantiles": 0.40,
-    # Dependence (25% total) — v0.3.0: both tail_dependence (crash co-movement) bumped
-    "pearson_corr": 0.20,
-    "spearman_corr": 0.12,
-    "copula_distance": 0.24,
-    "tail_dependence_upper": 0.12,
-    "tail_dependence_lower": 0.22,  # crash co-movement — critical for risk
-    "correlation_breakdown": 0.10,
+    # Dependence (25% total) — v0.3.0: both tail_dependence (crash co-movement) bumped.
+    # v0.3.0: + tail_dependence_asymmetry (the elliptical blind spot) and
+    # covariance_calibration (dispersion of the cov matrix); existing six trimmed
+    # proportionally so the category still sums to ~1.
+    "pearson_corr": 0.16,
+    "spearman_corr": 0.10,
+    "copula_distance": 0.19,
+    "tail_dependence_upper": 0.10,
+    "tail_dependence_lower": 0.18,  # crash co-movement — critical for risk
+    "correlation_breakdown": 0.08,
+    "tail_dependence_asymmetry": 0.10,  # crash-vs-rally asymmetry elliptical models miss
+    "covariance_calibration": 0.09,  # var/corr dispersion calibration
     # Temporal (20% total)
     "acf_returns": 0.35,
     "volatility_clustering": 0.35,

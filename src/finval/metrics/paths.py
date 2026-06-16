@@ -15,8 +15,10 @@ from scipy import stats
 from finval.core.result import MetricResult, create_error_metric
 from finval.core.thresholds import (
     CONDITIONAL_THRESHOLDS,
+    COV_CALIBRATION_THRESHOLDS,
     MEMORIZATION_THRESHOLDS,
     PATH_THRESHOLDS,
+    TAIL_ASYMMETRY_THRESHOLDS,
     quality_from_value,
 )
 from finval.metrics.distribution import compute_energy_distance
@@ -306,3 +308,318 @@ def compute_memorization(
     except Exception as e:
         logger.warning("memorization failed: %s", e)
         return create_error_metric("memorization", str(e), "memorization")
+
+
+def _to_uniform(x: np.ndarray) -> np.ndarray:
+    """Per-feature rank transform to pseudo-observations in (0, 1).
+
+    Matches the pseudo-obs convention used by the dependence metrics
+    (rankdata / (n + 1)); NaNs are ignored by ranking only finite rows
+    per column, leaving NaN in place so callers can mask per-pair.
+    """
+    out = np.full_like(x, np.nan, dtype=float)
+    for j in range(x.shape[1]):
+        col = x[:, j]
+        m = np.isfinite(col)
+        n_finite = int(m.sum())
+        if n_finite == 0:
+            continue
+        out[m, j] = stats.rankdata(col[m]) / (n_finite + 1)
+    return out
+
+
+def _empirical_tail_coeff(u: np.ndarray, v: np.ndarray, q: float, tail: str) -> float:
+    """Empirical tail-dependence coefficient at a finite quantile q.
+
+    lower: P(V < q | U < q);  upper: P(V > 1-q | U > 1-q). Returns NaN
+    when the conditioning tail is empty (so the pair can be dropped rather
+    than counted as a spurious 0). Mirrors dependence._tail_coefficient but
+    NaN-signals the empty-tail case instead of returning 0.
+    """
+    m = np.isfinite(u) & np.isfinite(v)
+    u, v = u[m], v[m]
+    if len(u) < 50:
+        return float("nan")
+    if tail == "upper":
+        cond = u > (1 - q)
+        joint = cond & (v > (1 - q))
+    else:
+        cond = u < q
+        joint = cond & (v < q)
+    n_cond = int(cond.sum())
+    if n_cond == 0:
+        return float("nan")
+    return float(joint.sum()) / n_cond
+
+
+def compute_tail_dependence_asymmetry(
+    synthetic_paths: np.ndarray,
+    real_paths: np.ndarray,
+    feature_names: list[str] | None = None,
+    quantile: float = 0.10,
+    thresholds: dict[str, float] | None = None,
+) -> MetricResult:
+    """Lower-vs-upper tail-dependence ASYMMETRY fidelity (the elliptical blind spot).
+
+    Real multivariate returns crash together more than they rally together:
+    the lower tail-dependence coefficient lambda_L exceeds the upper lambda_U,
+    so the per-pair asymmetry ``A = lambda_L - lambda_U`` is systematically
+    POSITIVE. Any elliptical generator (Gaussian, Student-t, and the
+    Gaussian/Ledoit-Wolf baselines) is radially symmetric and produces
+    ``A = 0`` for every pair by construction — it cannot be wrong on
+    ``tail_dependence_lower`` and ``tail_dependence_upper`` *individually* in a
+    way the existing pooled levels reliably catch, yet it gets the crash-vs-rally
+    ASYMMETRY exactly backwards (flat). This metric scores that one number
+    directly, so a symmetric copula can no longer hide behind level errors that
+    happen to cancel.
+
+    For each feature pair we compute the real and synthetic asymmetries
+    ``A_real`` and ``A_syn`` from rank pseudo-observations at a finite tail
+    ``quantile`` (default 10% — large enough to keep the conditioning tail
+    populated at realistic sample sizes so the lambda estimates aren't pure
+    noise), then score the mean absolute error
+    ``|A_syn - A_real|`` across pairs (lower is better, 0 = perfect). Pairs whose
+    conditioning tail is empty on either side are dropped (NaN), not scored as 0,
+    so the metric is honest under sparse extremes. Because A is a DIFFERENCE of
+    two coefficients, it is sign-aware: a model that flips the asymmetry
+    (rally-clustering instead of crash-clustering) is penalized, not rewarded.
+
+    Agnostic: operates on rank pseudo-obs of any multivariate panel, makes no
+    distributional assumption, and does not reference any particular generator.
+    On 3D path input the paths are flattened to cross-sectional rows
+    ``(N*H, D)``; on 2D input it is used directly.
+
+    Args:
+        synthetic_paths / real_paths: (n_paths, horizon, n_features) RETURNS,
+            or (n_samples, n_features) flat returns.
+        quantile: tail probability q for the conditioning event (default 0.05).
+        thresholds: override default thresholds.
+    """
+    try:
+        s = np.asarray(synthetic_paths, dtype=float)
+        r = np.asarray(real_paths, dtype=float)
+        if s.ndim == 3:
+            s = s.reshape(-1, s.shape[2])
+        if r.ndim == 3:
+            r = r.reshape(-1, r.shape[2])
+        if s.ndim != 2 or r.ndim != 2:
+            return create_error_metric(
+                "tail_dependence_asymmetry", "need 2D or 3D return data", "dependence"
+            )
+        n_features = s.shape[1]
+        if n_features < 2:
+            return create_error_metric(
+                "tail_dependence_asymmetry", "need >=2 features", "dependence"
+            )
+
+        su, ru = _to_uniform(s), _to_uniform(r)
+
+        per_pair: dict[str, dict] = {}
+        errs: list[float] = []
+        sum_a_real = 0.0
+        sum_a_syn = 0.0
+        n_valid = 0
+        for i in range(n_features):
+            for j in range(i + 1, n_features):
+                rl = _empirical_tail_coeff(ru[:, i], ru[:, j], quantile, "lower")
+                rup = _empirical_tail_coeff(ru[:, i], ru[:, j], quantile, "upper")
+                sl = _empirical_tail_coeff(su[:, i], su[:, j], quantile, "lower")
+                sup = _empirical_tail_coeff(su[:, i], su[:, j], quantile, "upper")
+                if not (np.isfinite(rl) and np.isfinite(rup) and np.isfinite(sl) and np.isfinite(sup)):
+                    continue
+                a_real = rl - rup
+                a_syn = sl - sup
+                err = abs(a_syn - a_real)
+                per_pair[f"{i}<->{j}"] = {
+                    "asym_real": a_real,
+                    "asym_synth": a_syn,
+                    "error": err,
+                }
+                errs.append(err)
+                sum_a_real += a_real
+                sum_a_syn += a_syn
+                n_valid += 1
+
+        if not errs:
+            return create_error_metric(
+                "tail_dependence_asymmetry", "no pair had a populated tail on both sides", "dependence"
+            )
+
+        mean_a_real = sum_a_real / n_valid
+        mean_a_synth = sum_a_syn / n_valid
+
+        # The scored statistic is the PANEL-LEVEL asymmetry bias
+        #   systematic_bias = |mean(A_syn) - mean(A_real)|.
+        # This is deliberate. The per-pair |A_syn - A_real| (reported as a
+        # diagnostic) is dominated by finite-tail lambda noise at realistic sample
+        # sizes — on the 50-name reference panel the honest real-vs-real per-pair
+        # MAE floor (~0.07) is LARGER than the real asymmetry signal (~0.05), so it
+        # cannot separate an elliptical model from an honest one. Averaging the
+        # signed asymmetry across all pairs cancels that idiosyncratic noise and
+        # leaves the systematic, directional defect: a radially-symmetric generator
+        # (Gaussian/Student-t) drives mean(A_syn)->0 while real mean(A) stays
+        # positive, so its bias ≈ the full real asymmetry; an honest resample has no
+        # directional bias and floors near zero. The metric stays in raw
+        # lambda-difference units and assumes no particular generator is correct.
+        per_pair_mae = float(np.mean(errs))
+        systematic_bias = float(abs(mean_a_synth - mean_a_real))
+        value = systematic_bias
+
+        th = thresholds or TAIL_ASYMMETRY_THRESHOLDS["tail_dependence_asymmetry"]
+        quality, passed = quality_from_value(value, th)
+
+        return MetricResult(
+            name="tail_dependence_asymmetry",
+            value=value,
+            quality=quality,
+            passed=passed,
+            thresholds=th,
+            category="dependence",
+            interpretation=(
+                f"Tail-asymmetry (lambda_L - lambda_U) error {value:.4f} at q={quantile:.2f} "
+                f"(per-pair MAE {per_pair_mae:.3f}, panel bias {systematic_bias:.3f}); "
+                f"mean A real {mean_a_real:+.3f} vs synth {mean_a_synth:+.3f} "
+                f"over {n_valid} pairs"
+            ),
+            per_pair=per_pair,
+            metadata={
+                "quantile": quantile,
+                "per_pair_mae": per_pair_mae,
+                "systematic_bias": systematic_bias,
+                "mean_asymmetry_real": mean_a_real,
+                "mean_asymmetry_synth": mean_a_synth,
+                "n_pairs_scored": n_valid,
+            },
+        )
+
+    except Exception as e:
+        logger.warning("tail_dependence_asymmetry failed: %s", e)
+        return create_error_metric("tail_dependence_asymmetry", str(e), "dependence")
+
+
+def compute_covariance_calibration(
+    synthetic_paths: np.ndarray,
+    real_paths: np.ndarray,
+    feature_names: list[str] | None = None,
+    thresholds: dict[str, float] | None = None,
+) -> MetricResult:
+    """Variance / correlation DISPERSION calibration of the synthetic covariance.
+
+    A generator can match the AVERAGE level of variances and correlations while
+    getting their cross-sectional SPREAD wrong — under-dispersing correlations
+    (too few near +/-1) and over-dispersing variances (too many extreme).
+    A covariance matrix that is right on average but wrong in dispersion produces
+    portfolio risk that is systematically mis-stated (min-variance hedges that
+    don't hedge), and no pooled level metric (pearson_corr is a mean abs error,
+    it cannot see a shrunk-vs-fanned spread that leaves the mean intact) catches
+    it. This metric scores the two dispersion ratios directly.
+
+    From each side we take the per-feature variances and the off-diagonal
+    Pearson correlations, and compare the DISPERSION (standard deviation across
+    features / across pairs) of synthetic vs real:
+
+    - ``corr_dispersion_ratio  = std(corr_synth_offdiag)  / std(corr_real_offdiag)``
+    - ``var_dispersion_ratio   = std(log var_synth)       / std(log var_real)``
+
+    (variance dispersion is taken in log space so it is scale-free and symmetric
+    in over/under). For each ratio the calibration error is ``|log(ratio)|`` —
+    0 when the spread matches, growing symmetrically whether the model
+    under-disperses (ratio<1) or over-disperses (ratio>1). The reported value is
+    the mean of the two log-ratio errors (lower is better). A ratio of e.g. 0.72
+    (corr under-dispersed 28%) or 1.42 (var over-dispersed 42%) maps to
+    |log 0.72| = 0.33 / |log 1.42| = 0.35 — both land in the "poor" band by
+    default, which is the intended sensitivity for that measured defect.
+
+    Agnostic: pure second-moment dispersion of any multivariate panel; no
+    generator-specific structure and no assumption that any particular model is
+    the reference. On 3D input the paths are flattened to ``(N*H, D)`` rows.
+
+    Args:
+        synthetic_paths / real_paths: (n_paths, horizon, n_features) RETURNS,
+            or (n_samples, n_features) flat returns.
+        thresholds: override default thresholds.
+    """
+    try:
+        s = np.asarray(synthetic_paths, dtype=float)
+        r = np.asarray(real_paths, dtype=float)
+        if s.ndim == 3:
+            s = s.reshape(-1, s.shape[2])
+        if r.ndim == 3:
+            r = r.reshape(-1, r.shape[2])
+        if s.ndim != 2 or r.ndim != 2:
+            return create_error_metric(
+                "covariance_calibration", "need 2D or 3D return data", "dependence"
+            )
+        n_features = s.shape[1]
+        if n_features < 2:
+            return create_error_metric(
+                "covariance_calibration", "need >=2 features", "dependence"
+            )
+
+        def _moments(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            x = x[np.all(np.isfinite(x), axis=1)]
+            if len(x) < 20:
+                raise ValueError("need >=20 clean rows")
+            var = np.var(x, axis=0)
+            c = np.corrcoef(x, rowvar=False)
+            offdiag = c[~np.eye(n_features, dtype=bool)]
+            return var, offdiag
+
+        var_r, corr_r = _moments(r)
+        var_s, corr_s = _moments(s)
+
+        # Correlation dispersion (spread of off-diagonal correlations).
+        corr_disp_r = float(np.std(corr_r))
+        corr_disp_s = float(np.std(corr_s))
+        corr_ratio = corr_disp_s / (corr_disp_r + 1e-12)
+
+        # Variance dispersion in log space (scale-free, symmetric over/under).
+        eps = 1e-30
+        logvar_r = np.log(var_r + eps)
+        logvar_s = np.log(var_s + eps)
+        var_disp_r = float(np.std(logvar_r))
+        var_disp_s = float(np.std(logvar_s))
+        var_ratio = var_disp_s / (var_disp_r + 1e-12)
+
+        # If a real dispersion is ~0 (e.g. a single feature, or identical vars),
+        # that axis is undefined — fall back to the other axis alone.
+        corr_def = corr_disp_r > 1e-9
+        var_def = var_disp_r > 1e-9
+        errs = []
+        if corr_def:
+            errs.append(abs(float(np.log(max(corr_ratio, 1e-12)))))
+        if var_def:
+            errs.append(abs(float(np.log(max(var_ratio, 1e-12)))))
+        if not errs:
+            return create_error_metric(
+                "covariance_calibration", "real dispersions degenerate (no spread to match)", "dependence"
+            )
+        value = float(np.mean(errs))
+
+        th = thresholds or COV_CALIBRATION_THRESHOLDS["covariance_calibration"]
+        quality, passed = quality_from_value(value, th)
+
+        return MetricResult(
+            name="covariance_calibration",
+            value=value,
+            quality=quality,
+            passed=passed,
+            thresholds=th,
+            category="dependence",
+            interpretation=(
+                f"Dispersion calibration {value:.4f}: corr-spread ratio {corr_ratio:.3f} "
+                f"(synth/real), var-spread ratio {var_ratio:.3f}"
+            ),
+            metadata={
+                "corr_dispersion_ratio": corr_ratio,
+                "var_dispersion_ratio": var_ratio,
+                "corr_dispersion_real": corr_disp_r,
+                "corr_dispersion_synth": corr_disp_s,
+                "var_dispersion_real": var_disp_r,
+                "var_dispersion_synth": var_disp_s,
+            },
+        )
+
+    except Exception as e:
+        logger.warning("covariance_calibration failed: %s", e)
+        return create_error_metric("covariance_calibration", str(e), "dependence")

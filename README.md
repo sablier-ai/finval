@@ -150,6 +150,17 @@ for name, syn in [("gaussian", gauss), ("iid", boot)]:
    rules, not just rank-order checks. Your model is evaluated against
    the ground truth the statistics literature actually endorses.
 
+## Changelog
+
+- **0.3.0** (additions) — Two new dependence metrics: `tail_dependence_asymmetry`
+  (scores whether synthetic paths reproduce the real lower-vs-upper
+  tail-dependence asymmetry `A = λ_L − λ_U` that elliptical/Gaussian
+  baselines get as 0) and `covariance_calibration` (scores the
+  variance/correlation dispersion ratios of synthetic vs real, catching a
+  covariance that is right on average but wrong in spread). Both run under
+  `validate(...)` and `validate_paths(...)`; dependence in-category weights
+  rebalanced.
+
 ## License
 
 MIT

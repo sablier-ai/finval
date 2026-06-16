@@ -38,9 +38,11 @@ from finval.metrics.distribution import (
     compute_tail_quantiles,
 )
 from finval.metrics.paths import (
+    compute_covariance_calibration,
     compute_drawdown_distribution,
     compute_memorization,
     compute_regime_conditional,
+    compute_tail_dependence_asymmetry,
 )
 from finval.metrics.temporal import (
     compute_acf_returns,
@@ -63,6 +65,10 @@ FLAT_METRICS = (
     "tail_dependence_upper",
     "tail_dependence_lower",
     "correlation_breakdown",
+    # v0.3.0: cross-sectional dependence metrics — flat-input, also fed the
+    # flattened rows by validate_paths (like the other dependence metrics).
+    "tail_dependence_asymmetry",
+    "covariance_calibration",
 )
 
 # Metrics that require path (3D) data
@@ -116,6 +122,14 @@ def _run_flat_metrics(
                 results["tail_dependence_lower"] = lo
         if "correlation_breakdown" in include:
             results["correlation_breakdown"] = compute_correlation_breakdown(
+                synthetic, real, feature_names
+            )
+        if "tail_dependence_asymmetry" in include:
+            results["tail_dependence_asymmetry"] = compute_tail_dependence_asymmetry(
+                synthetic, real, feature_names
+            )
+        if "covariance_calibration" in include:
+            results["covariance_calibration"] = compute_covariance_calibration(
                 synthetic, real, feature_names
             )
 
