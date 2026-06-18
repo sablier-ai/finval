@@ -12,9 +12,14 @@ forecast calibration.
 **[FinBench](https://github.com/sablier-ai/finbench)**, the public
 leaderboard for multivariate financial time-series generation.
 
-> ⚠️ **Beta.** The library is in active use (57 tests, FinBench
-> production scoring) but the public API may still evolve in minor
-> versions. Pin to `finval==0.1.x` if you need API stability.
+> **Current release: `0.3.0`** (tagged; `0.2.0` preserved at its tag for
+> reproducibility). 0.3.0 adds two model-agnostic dependence metrics
+> --- `tail_dependence_asymmetry` (the lower-vs-upper tail gap
+> $A=\lambda_L-\lambda_U$, exactly zero by construction for every
+> elliptical model) and `covariance_calibration` (variance/correlation
+> dispersion) --- under de-quantised continuous scoring. The library is
+> in active use (FinBench v2 production scoring); pin an exact version
+> if you need score-stability across releases.
 
 ## Why finval?
 
@@ -25,9 +30,10 @@ dependence coefficients. For financial applications — risk management,
 backtesting, derivatives — you need a suite that tests the things that
 actually matter for market data.
 
-`finval` ships **19 weighted metrics** across 5 categories, each with
+`finval` ships **weighted metrics across 5 categories** (including, as
+of 0.3.0, the two model-agnostic dependence metrics above), each with
 thresholds calibrated against real financial data and justified by the
-statistical literature. The 19 split across three input shapes:
+statistical literature. They split across three input shapes:
 
 - **9 distributional metrics** (`marginal_ks`, `energy_distance`,
   `tail_quantiles`, `pearson_corr`, `spearman_corr`, `copula_distance`,
