@@ -17,8 +17,10 @@ leaderboard for multivariate financial time-series generation.
 > --- `tail_dependence_asymmetry` (the lower-vs-upper tail gap
 > $A=\lambda_L-\lambda_U$, exactly zero by construction for every
 > elliptical model) and `covariance_calibration` (variance/correlation
-> dispersion) --- under de-quantised continuous scoring. The library is
-> in active use (FinBench v2 production scoring); pin an exact version
+> dispersion) --- plus two new category axes, `regime_conditional`
+> (regime-conditional fidelity) and `memorization` (nearest-neighbor
+> data-copying), all under de-quantised continuous scoring. The library
+> is in active use (FinBench v2 production scoring); pin an exact version
 > if you need score-stability across releases.
 
 ## Why finval?
@@ -30,28 +32,32 @@ dependence coefficients. For financial applications — risk management,
 backtesting, derivatives — you need a suite that tests the things that
 actually matter for market data.
 
-`finval` ships **weighted metrics across 5 categories** (including, as
-of 0.3.0, the two model-agnostic dependence metrics above), each with
-thresholds calibrated against real financial data and justified by the
-statistical literature. They split across three input shapes:
+`finval` ships **23 weighted metrics across 7 categories** (including,
+as of 0.3.0, the two model-agnostic dependence metrics above plus a
+regime-conditional axis and a memorization axis), each with thresholds
+calibrated against real financial data and justified by the statistical
+literature. They split across three entry points by input shape:
 
-- **9 distributional metrics** (`marginal_ks`, `energy_distance`,
-  `tail_quantiles`, `pearson_corr`, `spearman_corr`, `copula_distance`,
-  `tail_dependence_upper`, `tail_dependence_lower`,
-  `correlation_breakdown`) — run by `validate(...)` on 2D flat data.
-- **5 path-level metrics** (`acf_returns`, `volatility_clustering`,
-  `leverage_effect`, `cross_correlation`, `drawdown_distribution`) —
-  run by `validate_paths(...)` alongside the 9 distributional ones, on
-  3D sample paths (so `validate_paths` produces **14** scores total).
+- **11 flat metrics** — 3 distributional (`marginal_ks`,
+  `energy_distance`, `tail_quantiles`) and 8 dependence (`pearson_corr`,
+  `spearman_corr`, `copula_distance`, `tail_dependence_upper`,
+  `tail_dependence_lower`, `correlation_breakdown`,
+  `tail_dependence_asymmetry`, `covariance_calibration`) — run by
+  `validate(...)` on 2D flat data.
+- **7 path-level metrics** (`acf_returns`, `volatility_clustering`,
+  `leverage_effect`, `cross_correlation`, `drawdown_distribution`,
+  `regime_conditional`, `memorization`) — run by `validate_paths(...)`
+  on 3D sample paths, which also reshapes the paths and runs the 11
+  flat metrics on them (so `validate_paths` produces **18** scores
+  total).
 - **5 calibration metrics** (`pit_uniformity`, `crps`, `coverage_50`,
   `coverage_90`, `coverage_95`) — run by `validate_calibration(...)` on
   per-observation forecast distributions paired with realized actuals.
 
-Implementation note: the 19 metrics come from **17 underlying compute
-functions** producing **20 individual numeric outputs** —
+Implementation note: the 23 weighted metrics come from **20 underlying
+compute functions** producing **23 individual numeric outputs** —
 `compute_tail_dependence` returns upper + lower (2 scores) and
-`compute_coverage` returns the three levels (3 scores). One additional
-diagnostic metric (`tail_heaviness`) is computed and reported but not
+`compute_coverage` returns the three levels (3 scores). Every output is
 weighted into `overall_score`.
 
 ## Installation
@@ -85,11 +91,10 @@ print(report.summary())
 
 ## Metrics
 
-### Distribution (15% of overall score)
+### Distribution (20% of overall score)
 - **marginal_ks** — Kolmogorov-Smirnov test on each feature's marginal
 - **energy_distance** — multivariate distribution difference
 - **tail_quantiles** — 1st/5th/95th/99th percentile comparison (robust alternative to kurtosis)
-- **tail_heaviness** — excess kurtosis error (diagnostic only)
 
 ### Dependence (25%)
 - **pearson_corr** — linear correlation matrix error
@@ -98,20 +103,28 @@ print(report.summary())
 - **tail_dependence_upper** — rally co-movement (λ_U)
 - **tail_dependence_lower** — crash co-movement (λ_L)
 - **correlation_breakdown** — stress vs calm regime correlation shift
+- **tail_dependence_asymmetry** — fidelity of the crash-vs-rally gap A = λ_L − λ_U (0 by construction for any elliptical/Gaussian model, so it catches what the individual λ levels miss)
+- **covariance_calibration** — variance/correlation dispersion ratio (catches a covariance that is right on average but wrong in spread)
 
-### Temporal (20%)
+### Temporal (15%)
 - **acf_returns** — autocorrelation of returns (should be ~0)
 - **volatility_clustering** — autocorrelation of squared returns
 - **leverage_effect** — corr(r_t, |r_{t+k}|) (negative for equities)
 - **cross_correlation** — contemporaneous cross-asset correlation
 
-### Calibration (30%)
+### Calibration (15%)
 - **pit_uniformity** — KS test on probability integral transforms
 - **crps** — continuous ranked probability score
 - **coverage_50 / 90 / 95** — empirical vs nominal interval coverage
 
-### Path-level (10%)
+### Path-level (8%)
 - **drawdown_distribution** — KS test on max drawdown distribution
+
+### Conditional (12%)
+- **regime_conditional** — regime-conditional distributional fidelity: paths are bucketed into low/mid/high realized-volatility regimes (tercile edges taken from the real paths) and scored on both the *frequency* of stress paths (regime mass) and the within-regime return shape. Every pooled metric can pass while a generator under-produces or under-disperses the high-vol regime — the exact failure that underprices options in a stress regime.
+
+### Memorization (5%)
+- **memorization** — data-copying diagnostic: compares synth→real nearest-neighbor distances against real→real (leave-one-out) NN distances. A memorizing generator places samples on top of real points (ratio → 0) yet scores perfectly on every other metric, so this needs its own axis. Pass the *training* set as `real` for a true test.
 
 ## Baselines
 
@@ -158,14 +171,21 @@ for name, syn in [("gaussian", gauss), ("iid", boot)]:
 
 ## Changelog
 
-- **0.3.0** (additions) — Two new dependence metrics: `tail_dependence_asymmetry`
+- **0.3.0** — Two new dependence metrics: `tail_dependence_asymmetry`
   (scores whether synthetic paths reproduce the real lower-vs-upper
   tail-dependence asymmetry `A = λ_L − λ_U` that elliptical/Gaussian
   baselines get as 0) and `covariance_calibration` (scores the
   variance/correlation dispersion ratios of synthetic vs real, catching a
-  covariance that is right on average but wrong in spread). Both run under
-  `validate(...)` and `validate_paths(...)`; dependence in-category weights
-  rebalanced.
+  covariance that is right on average but wrong in spread). Two new
+  category axes: `regime_conditional` (12% — regime-conditional fidelity,
+  the measured option-pricing gap that no pooled metric sees) and
+  `memorization` (5% — nearest-neighbor data-copying diagnostic). Scoring
+  is now de-quantized (continuous bands rather than discrete tiers).
+  Category weights rebalanced: distribution 0.15→0.20, temporal
+  0.20→0.15, calibration 0.30→0.15, path 0.10→0.08, with the new
+  conditional/memorization axes carved out. The dependence and path
+  metrics run under `validate_paths(...)`; the two dependence metrics
+  also run under `validate(...)`.
 
 ## License
 
