@@ -83,3 +83,27 @@ def test_density_coverage_directly():
     dens, cov = density_coverage(_mixture(600, np.random.default_rng(12)), real, k=5)
     assert 0.0 <= cov <= 1.0 and dens >= 0.0
     assert cov > 0.7  # faithful → high recall
+
+
+def test_generative_flags_insufficient_independent_reference():
+    """Too few INDEPENDENT reference windows for the feature dim (the long-horizon thin-data case:
+    ~9 independent year-paths) → density/coverage under-determined → flagged not-applicable, not
+    scored ~0. Caller's contract = non-overlapping windows; here 20 < 3*12d floor."""
+    import finval
+    rng = np.random.default_rng(0)
+    real = rng.normal(0, 1, (20, 60, 3))      # 20 independent paths; path_features dim=12 -> floor 36
+    synth = rng.normal(0, 1, (800, 60, 3))
+    rep = finval.validate_generative(synth, real)
+    cd = rep.metrics["coverage_deficit"]
+    assert cd.applicable is False, f"expected N/A on insufficient reference, got {cd.value} {cd.quality}"
+    assert "too few" in cd.interpretation.lower()
+
+
+def test_generative_scores_healthy_reference():
+    """A genuinely diverse real reference must still score normally (no false-positive degeneracy)."""
+    import finval
+    rng = np.random.default_rng(1)
+    real = rng.normal(0, 1, (1200, 60, 3))
+    synth = rng.normal(0, 1, (800, 60, 3))
+    rep = finval.validate_generative(synth, real)
+    assert rep.metrics["coverage_deficit"].applicable is True

@@ -38,7 +38,19 @@ import numpy as np
 from scipy.spatial.distance import cdist
 
 from finval.baselines.historical import block_bootstrap, historical_bootstrap
-from finval.core.result import MetricResult, ValidationReport, create_error_metric
+from finval.core.result import (
+    MetricResult,
+    ValidationReport,
+    create_error_metric,
+    create_undefined_metric,
+)
+
+# Naeem density/coverage needs enough INDEPENDENT reference points relative to the feature
+# dimension (n >> d); below this floor the estimate is under-determined and saturates. The caller's
+# contract is to pass INDEPENDENT reference windows (non-overlapping) — point-cloud geometry can't
+# tell "undersampled thin manifold" (e.g. ~9 independent overlapping long-horizon windows) from
+# "legitimately tight clusters", so we guard on the count, not the shape.
+MIN_SAMPLES_PER_DIM = 3
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +126,23 @@ def density_coverage(synth_pts: np.ndarray, real_pts: np.ndarray, k: int = 5) ->
     return density, coverage
 
 
+def _insufficient_reference(real_pts: np.ndarray, k: int) -> tuple[bool, str]:
+    """Are there too few INDEPENDENT real points for a reliable density/coverage estimate in this
+    feature space? Naeem density/coverage needs n >> d; below ~MIN_SAMPLES_PER_DIM·d (or <= k) the
+    estimate is under-determined and saturates. Assumes the caller passes independent (non-overlapping)
+    reference windows — geometry can't distinguish undersampled-thin from legitimately-clustered."""
+    R = _clean(real_pts)
+    d = R.shape[1] if R.ndim == 2 else 0
+    floor = max(k + 1, MIN_SAMPLES_PER_DIM * d)
+    if len(R) < floor:
+        return True, (
+            f"too few independent reference points ({len(R)} < {floor} = max(k+1, "
+            f"{MIN_SAMPLES_PER_DIM}*{d}d)) for a reliable density/coverage estimate — pass more "
+            "independent (non-overlapping) reference windows; common at long horizons / thin data"
+        )
+    return False, ""
+
+
 def _baseline_like(real: np.ndarray, synthetic: np.ndarray, *, block: int, seed: int) -> np.ndarray:
     """A block-bootstrap (3D) / i.i.d.-bootstrap (2D) replay of `real`, matched to the
     SHAPE of `synthetic` — the honest replay reference."""
@@ -175,6 +204,15 @@ def validate_generative(
             return _err_report(f"feature mismatch: synthetic {syn.shape[-1]}, real {rl.shape[-1]}")
 
         syn_pts, real_pts = _to_points(syn), _to_points(rl)
+        degen, reason = _insufficient_reference(real_pts, k)
+        if degen:
+            return ValidationReport(
+                metrics={
+                    "coverage_deficit": create_undefined_metric("coverage_deficit", reason, "generative"),
+                    "plausibility_deficit": create_undefined_metric("plausibility_deficit", reason, "generative"),
+                },
+                weights={}, category_weights={"generative": 1.0},
+            )
         density, coverage = density_coverage(syn_pts, real_pts, k=k)
 
         # The replay reference: block-bootstrap of real, matched to synthetic's shape.

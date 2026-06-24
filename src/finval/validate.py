@@ -13,7 +13,7 @@ import logging
 
 import numpy as np
 
-from finval.core.result import MetricResult, ValidationReport
+from finval.core.result import MetricResult, ValidationReport, create_undefined_metric
 from finval.core.thresholds import (
     CATEGORY_WEIGHTS,
     METRIC_CATEGORY,
@@ -518,14 +518,25 @@ def validate_conditional(
 
     per_axis = multi_axis_conditional_sensitivity(forecast_samples, actuals, label_sets, feature_names)
     results: dict[str, MetricResult] = dict(per_axis)
-    # Headline = the worst (highest-value = least-responsive) finite axis.
-    finite = [m for m in per_axis.values() if np.isfinite(m.value)]
-    if finite:
+    # Headline = the worst (highest-value = least-responsive) finite axis. But don't score the
+    # conditioning off a single surviving axis: when several axes were requested and most went
+    # undefined (thin data / few anchors → regimes below the obs floor, e.g. long-horizon OOS),
+    # the headline is unreliable → mark not-applicable (flag, don't drag the scored lens/gate).
+    finite = [m for m in per_axis.values() if np.isfinite(m.value) and m.applicable]
+    min_axes = 2 if len(label_sets) >= 2 else 1
+    if len(finite) >= min_axes:
         worst = max(finite, key=lambda m: m.value)
         results["conditional_sensitivity"] = dataclasses.replace(
             worst,
             name="conditional_sensitivity",
             interpretation=f"worst-axis [{worst.name.split('@')[-1]}] — {worst.interpretation}",
+        )
+    else:
+        results["conditional_sensitivity"] = create_undefined_metric(
+            "conditional_sensitivity",
+            f"only {len(finite)}/{len(label_sets)} regime axes measurable on this data "
+            f"(need >={min_axes}) — too few to assess conditioning reliably",
+            "regime_sensitivity",
         )
     results.update(
         regime_stratified_calibration(forecast_samples, actuals, label_sets[primary], feature_names)

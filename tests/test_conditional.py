@@ -153,3 +153,20 @@ def test_validate_full_not_gated_by_undefined_conditional():
     labels = np.array(["calm"] * 60)
     rep = finval.validate_full(forecast_samples=fs, actuals=act, regime_labels=labels)
     assert "conditional_sensitivity" not in rep.failing_gates
+
+
+def test_conditional_headline_na_when_most_axes_undefined():
+    """Long-horizon thin-data: many axes requested but most go undefined (regimes below floor) →
+    don't score conditioning off the single surviving noisy axis; headline = not-applicable."""
+    rng = np.random.default_rng(11)
+    n = 90
+    fs = rng.normal(0, 1, (n, 80, N_FEAT)); act = rng.normal(0, 1, (n, N_FEAT))
+    # 4 degenerate axes (one populated regime → undefined) + 1 valid 2-regime axis
+    one = np.array(["a"] * n)
+    sig = np.where(np.arange(n) < n // 2, 0.01, 0.06)[:, None]
+    act_v = rng.normal(0, 1, (n, N_FEAT)) * sig
+    valid = np.where(np.arange(n) < n // 2, "lo", "hi")
+    labels = {"vol": one, "trend": one, "drawdown": one, "vol_term": one, "dispersion": valid}
+    rep = validate_conditional(fs, act_v, labels)
+    cs = rep.metrics["conditional_sensitivity"]
+    assert cs.applicable is False, f"expected N/A with only 1/5 axes measurable, got {cs.value}"
