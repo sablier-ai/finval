@@ -215,7 +215,8 @@ def compute_crps(
             thresholds=th,
             category="calibration",
             interpretation=(
-                f"Normalized CRPS {overall:.4f} (optimal ~0.234 for Gaussian, ~0.28 for t_5)"
+                f"Normalized CRPS {overall:.4f} "
+                f"(well-calibrated Gaussian floor ~0.564 = 1/√π; pass band 0.58/0.65/0.80)"
             ),
             per_feature=per_feature_crps,
         )

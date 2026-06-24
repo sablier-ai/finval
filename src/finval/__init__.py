@@ -15,15 +15,29 @@ For path-level validation with drawdowns and calibration:
     report = finval.validate_paths(synthetic_paths, real_returns)
 """
 
-from finval.core.result import MetricResult, ValidationReport
-from finval.validate import validate, validate_paths
+from finval.core.result import FullReport, MetricResult, ValidationReport
+from finval.metrics.generative import validate_generative
+from finval.validate import (
+    validate,
+    validate_against_baselines,
+    validate_calibration,
+    validate_conditional,
+    validate_full,
+    validate_paths,
+)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "MetricResult",
     "ValidationReport",
+    "FullReport",
     "validate",
     "validate_paths",
+    "validate_calibration",
+    "validate_conditional",
+    "validate_generative",
+    "validate_against_baselines",
+    "validate_full",
     "__version__",
 ]

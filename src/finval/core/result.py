@@ -50,13 +50,22 @@ class MetricResult:
     per_feature: dict[str, Any] = field(default_factory=dict)
     per_pair: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # False = the property could NOT be measured on this data (e.g. the regimes don't
+    # separate the real outcomes, so conditional-sensitivity is undefined) — as opposed
+    # to "measured and poor". An inapplicable metric must NEVER gate or score as a model
+    # failure; consumers exclude it. Keeps a model-agnostic library honest: a model isn't
+    # "poor" because the USER's data lacks the structure a metric needs.
+    applicable: bool = True
 
     def __post_init__(self) -> None:
         # Sanitize NaN/Inf to ensure serializable output
         if self.value is not None and (np.isnan(self.value) or np.isinf(self.value)):
             self.value = float("inf")
-            self.quality = "poor"
-            self.passed = False
+            if self.applicable:
+                self.quality = "poor"          # genuine failure → worst grade
+                self.passed = False
+            # else: undefined/not-applicable — keep the caller's neutral grade so it
+            # neither gates nor counts as a model failure (excluded via the inf value).
         if self.quality not in QUALITY_LEVELS:
             raise ValueError(f"quality must be one of {QUALITY_LEVELS}, got {self.quality!r}")
 
@@ -99,6 +108,7 @@ class MetricResult:
             "value": self.value,
             "quality": self.quality,
             "passed": self.passed,
+            "applicable": self.applicable,
             "score": self.score,
             "thresholds": self.thresholds,
             "category": self.category,
@@ -121,7 +131,8 @@ def create_error_metric(
     error: str,
     category: str = "uncategorized",
 ) -> MetricResult:
-    """Build a poor-quality result representing a computation failure."""
+    """Build a poor-quality result representing a computation failure (a genuine error —
+    bad input shape, a crash — that the caller should fix; scores 0 and may gate)."""
     return MetricResult(
         name=name,
         value=float("inf"),
@@ -130,6 +141,27 @@ def create_error_metric(
         category=category,
         interpretation=f"Failed: {error}",
         metadata={"error": error},
+    )
+
+
+def create_undefined_metric(
+    name: str,
+    reason: str,
+    category: str = "uncategorized",
+) -> MetricResult:
+    """Build a NOT-APPLICABLE result: the property genuinely cannot be measured on this data
+    (not a model failure). Excluded from lens scores and hard gates (inf value + applicable=
+    False), so a model is never penalized for the user's data lacking the structure a metric
+    needs. Distinct from `create_error_metric` (a real computation error)."""
+    return MetricResult(
+        name=name,
+        value=float("nan"),          # sanitized to inf in __post_init__; applicable=False keeps grade neutral
+        quality="acceptable",
+        passed=True,
+        applicable=False,
+        category=category,
+        interpretation=f"Not applicable: {reason}",
+        metadata={"undefined_reason": reason},
     )
 
 
@@ -237,4 +269,60 @@ class ValidationReport:
             "metrics": {name: m.to_dict() for name, m in self.metrics.items()},
             "weights": dict(self.weights),
             "category_weights": dict(self.category_weights),
+        }
+
+
+@dataclass
+class FullReport:
+    """Comprehensive multi-lens report (v0.4.0, from ``validate_full``).
+
+    The primary research-guidance object: a **per-lens vector** (marginal / dependence /
+    temporal / joint / conditional / generative), an overall weighted over the lenses that
+    were actually scorable (renormalized — partial inputs are honest), and the **hard gates**.
+    ``overall_score`` is intentionally a *different, more complete* number than a pooled
+    ``ValidationReport.overall_score``; if any hard gate is "poor", the model is ``gated`` and
+    ``overall_quality`` is "poor" regardless of the weighted score.
+    """
+
+    metrics: dict[str, MetricResult] = field(default_factory=dict)
+    per_lens: dict[str, float] = field(default_factory=dict)
+    lens_weights_used: dict[str, float] = field(default_factory=dict)
+    overall_score: float = 0.0
+    failing_gates: list[str] = field(default_factory=list)
+
+    @property
+    def gated(self) -> bool:
+        return len(self.failing_gates) > 0
+
+    @property
+    def overall_quality(self) -> str:
+        if self.gated:
+            return "poor"
+        s = self.overall_score
+        if s >= 0.85:
+            return "excellent"
+        if s >= 0.65:
+            return "good"
+        if s >= 0.45:
+            return "acceptable"
+        return "poor"
+
+    def summary(self) -> str:
+        head = f"finval FullReport — {self.overall_quality.upper()} ({self.overall_score:.0%})"
+        if self.gated:
+            head += f"  ⚠ GATED: {', '.join(self.failing_gates)}"
+        lines = [head, "  per-lens:"]
+        for lens, s in sorted(self.per_lens.items(), key=lambda kv: -kv[1]):
+            lines.append(f"    {lens:12s} {s:.2f}")
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overall_score": self.overall_score,
+            "overall_quality": self.overall_quality,
+            "gated": self.gated,
+            "failing_gates": list(self.failing_gates),
+            "per_lens": dict(self.per_lens),
+            "lens_weights_used": dict(self.lens_weights_used),
+            "metrics": {name: m.to_dict() for name, m in self.metrics.items()},
         }

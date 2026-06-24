@@ -98,9 +98,9 @@ PATH_THRESHOLDS: dict[str, dict[str, float]] = {
 # than pooled. value = within-regime energy distance (stress-weighted) + 0.5*mass
 # error. Thresholds calibrated against the model corpus (see FINVAL_V2_DECISION.md).
 CONDITIONAL_THRESHOLDS: dict[str, dict[str, float]] = {
-    # Calibrated on the model corpus: real-vs-real = 0; FLOW/GARCH/DCC ~0.23-0.30
-    # ("good" — they get within-regime shape right but under-produce stress ~10x, so
-    # not "excellent"); regime-collapsing deep-gen models (zero high-vol paths) ~1-3.5
+    # Calibrated on a representative model corpus: real-vs-real = 0; typical generators
+    # (GARCH/DCC, neural) ~0.23-0.30 ("good" — they get within-regime shape right but
+    # under-produce stress ~10x, not "excellent"); regime-collapsing models (zero high-vol) ~1-3.5
     # ("poor"). No current model earns "excellent" — that needs the stress FREQUENCY right.
     "regime_conditional": {"excellent": 0.20, "good": 0.45, "acceptable": 0.75},
 }
@@ -132,11 +132,11 @@ TAIL_ASYMMETRY_THRESHOLDS: dict[str, dict[str, float]] = {
 # correlation-spread ratio and the (log-)variance-spread ratio of synth vs real.
 # 0 = spreads match; |log| grows symmetrically whether the model under- or
 # over-disperses. A perfectly calibrated resample sits at sampling noise (~0.05);
-# the measured FLOW defect (corr under-dispersed ~28% -> |log .72|=.33, var
+# a measured generator defect (e.g. corr under-dispersed ~28% -> |log .72|=.33, var
 # over-dispersed ~42% -> |log 1.42|=.35) averages ~0.34 -> "poor". An elliptical
 # fit to the right covariance matches dispersion well (it reproduces second
 # moments), so this metric is genuinely orthogonal to tail_dependence_asymmetry
-# and does NOT single out FLOW — it just measures whichever side gets spread wrong.
+# and does NOT single out any one generator — it just measures whichever side gets spread wrong.
 COV_CALIBRATION_THRESHOLDS: dict[str, dict[str, float]] = {
     "covariance_calibration": {"excellent": 0.10, "good": 0.20, "acceptable": 0.30},
 }
@@ -301,3 +301,58 @@ def default_absolute_weights() -> dict[str, float]:
         cat = METRIC_CATEGORY[metric]
         out[metric] = round(CATEGORY_WEIGHTS[cat] * w_in_cat, 4)
     return out
+
+
+# ---------------------------------------------------------------------------
+# v0.4.0 — LENS structure for the comprehensive scorer `validate_full`.
+# ---------------------------------------------------------------------------
+# Six orthogonal-ish lenses spanning everything we want from a generative model. Used ONLY by
+# `validate_full` (the all-inputs comprehensive scorer); the pooled `validate`/`validate_paths`
+# keep their own category defaults above (they only see (synthetic, real), so they can only
+# cover the marginal/dependence/temporal/joint lenses anyway). Calibration folds into
+# `conditional` (calibration is inherently about predictive distributions given context);
+# `drawdown` folds into `temporal`; `memorization` into `generative`.
+#
+# IMPORTANT: these weights are a DESIGN PROPOSAL. Calibrate against a real-vs-real floor + a
+# representative model corpus before locking (same discipline as the 0.3.0 thresholds above).
+
+LENS_WEIGHTS: dict[str, float] = {
+    "marginal": 0.15,
+    "dependence": 0.20,
+    "temporal": 0.13,
+    "joint": 0.10,
+    "conditional": 0.22,   # elevated: the climatology axis the pooled panel was blind to
+    "generative": 0.20,    # elevated: the generator-vs-replay reason-to-exist
+}
+
+# metric -> (lens, within-lens weight). Metrics absent here are localizers (computed + reported,
+# weight 0). Within-lens weights sum to ~1 per lens.
+LENS_SCORED: dict[str, tuple[str, float]] = {
+    # marginal
+    "marginal_ks": ("marginal", 0.40), "tail_quantiles": ("marginal", 0.60),
+    # dependence
+    "copula_distance": ("dependence", 0.25), "tail_dependence_lower": ("dependence", 0.20),
+    "tail_dependence_upper": ("dependence", 0.12), "tail_dependence_asymmetry": ("dependence", 0.13),
+    "covariance_calibration": ("dependence", 0.10), "pearson_corr": ("dependence", 0.10),
+    "spearman_corr": ("dependence", 0.05), "correlation_breakdown": ("dependence", 0.05),
+    # temporal
+    "volatility_clustering": ("temporal", 0.35), "acf_returns": ("temporal", 0.25),
+    "leverage_effect": ("temporal", 0.15), "drawdown_distribution": ("temporal", 0.15),
+    "cross_correlation": ("temporal", 0.10),
+    # joint (omnibus)
+    "energy_distance": ("joint", 0.60), "c2st": ("joint", 0.40),
+    # conditional (incl. folded-in calibration)
+    "conditional_sensitivity": ("conditional", 0.35), "regime_conditional": ("conditional", 0.15),
+    "within_regime_calibration_gap": ("conditional", 0.15), "crps": ("conditional", 0.15),
+    "pit_uniformity": ("conditional", 0.10), "coverage_90": ("conditional", 0.10),
+    # generative
+    "coverage_deficit": ("generative", 0.40), "plausibility_deficit": ("generative", 0.30),
+    "memorization": ("generative", 0.30),
+}
+
+# A "poor" on any of these flags the model regardless of the weighted aggregate (the failure
+# modes that must never be averaged away).
+HARD_GATES: tuple[str, ...] = (
+    "memorization", "tail_quantiles", "tail_dependence_lower", "drawdown_distribution",
+    "conditional_sensitivity", "c2st", "coverage_deficit",
+)
