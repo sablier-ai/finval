@@ -12,16 +12,21 @@ forecast calibration.
 **[FinBench](https://github.com/sablier-ai/finbench)**, the public
 leaderboard for multivariate financial time-series generation.
 
-> **Current release: `0.3.0`** (tagged; `0.2.0` preserved at its tag for
-> reproducibility). 0.3.0 adds two model-agnostic dependence metrics
-> --- `tail_dependence_asymmetry` (the lower-vs-upper tail gap
-> $A=\lambda_L-\lambda_U$, exactly zero by construction for every
-> elliptical model) and `covariance_calibration` (variance/correlation
-> dispersion) --- plus two new category axes, `regime_conditional`
-> (regime-conditional fidelity) and `memorization` (nearest-neighbor
-> data-copying), all under de-quantised continuous scoring. The library
-> is in active use (FinBench v2 production scoring); pin an exact version
-> if you need score-stability across releases.
+> **Current release: `0.4.0`** (`0.2.0`/`0.3.0` preserved at their tags for
+> reproducibility). 0.4.0 reorganizes scoring into **6 weighted lenses** —
+> marginal (0.15), dependence (0.20), temporal (0.13), joint (0.10),
+> **conditional (0.22)** and **generative (0.20)** — plus **7 hard gates** that
+> fail a model outright regardless of the weighted score (`memorization`,
+> `tail_quantiles`, `tail_dependence_lower`, `drawdown_distribution`,
+> `conditional_sensitivity`, `c2st`, `coverage_deficit`). New in 0.4.0: a
+> regime-stratified **`conditional_sensitivity`** axis (catches a
+> calibrated-but-*climatological* generator whose forecast barely moves across
+> regimes), a **generative** lens (Naeem density/coverage scored as the delta vs
+> a block-bootstrap *replay* of the real data — a generator must beat replay to
+> justify itself), a **joint** C2ST omnibus, and **graceful degradation**
+> (metrics flagged non-`applicable` on thin-data / long-horizon inputs rather
+> than scored as failures). The library is in active use (FinBench v2 production
+> scoring); pin an exact version if you need score-stability across releases.
 
 ## Why finval?
 
@@ -32,11 +37,11 @@ dependence coefficients. For financial applications — risk management,
 backtesting, derivatives — you need a suite that tests the things that
 actually matter for market data.
 
-`finval` ships **23 weighted metrics across 7 categories** (including,
-as of 0.3.0, the two model-agnostic dependence metrics above plus a
-regime-conditional axis and a memorization axis), each with thresholds
-calibrated against real financial data and justified by the statistical
-literature. They split across three entry points by input shape:
+`finval` ships **26 scored metrics across 6 weighted lenses** (marginal,
+dependence, temporal, joint, conditional, generative) **+ 7 hard gates +
+diagnostic localizers**, each with thresholds calibrated against real financial
+data and justified by the statistical literature. They split across three entry
+points by input shape:
 
 - **11 flat metrics** — 3 distributional (`marginal_ks`,
   `energy_distance`, `tail_quantiles`) and 8 dependence (`pearson_corr`,
@@ -91,40 +96,43 @@ print(report.summary())
 
 ## Metrics
 
-### Distribution (20% of overall score)
+As of 0.4.0 the weighted score is a **six-lens** mean (weights below); a set of
+**diagnostic localizers** is computed + reported at weight 0; and **7 hard gates**
+fail a model outright. `validate_full(...)` runs every lens it has inputs for.
+
+### Marginal (15%)
 - **marginal_ks** — Kolmogorov-Smirnov test on each feature's marginal
 - **energy_distance** — multivariate distribution difference
-- **tail_quantiles** — 1st/5th/95th/99th percentile comparison (robust alternative to kurtosis)
+- **tail_quantiles** *(gate)* — 1st/5th/95th/99th percentile comparison (robust alternative to kurtosis)
+- **tail_heaviness** — tail-index fidelity
 
-### Dependence (25%)
-- **pearson_corr** — linear correlation matrix error
-- **spearman_corr** — rank correlation matrix error
+### Dependence (20%)
+- **pearson_corr** / **spearman_corr** — linear / rank correlation matrix error
 - **copula_distance** — Cramér-von Mises distance between empirical copulas
-- **tail_dependence_upper** — rally co-movement (λ_U)
-- **tail_dependence_lower** — crash co-movement (λ_L)
+- **tail_dependence_upper** (λ_U) / **tail_dependence_lower** *(gate)* (λ_L) — rally / crash co-movement
 - **correlation_breakdown** — stress vs calm regime correlation shift
 - **tail_dependence_asymmetry** — fidelity of the crash-vs-rally gap A = λ_L − λ_U (0 by construction for any elliptical/Gaussian model, so it catches what the individual λ levels miss)
-- **covariance_calibration** — variance/correlation dispersion ratio (catches a covariance that is right on average but wrong in spread)
+- **covariance_calibration** — variance/correlation dispersion ratio (catches a covariance right on average but wrong in spread)
 
-### Temporal (15%)
+### Temporal (13%)
 - **acf_returns** — autocorrelation of returns (should be ~0)
 - **volatility_clustering** — autocorrelation of squared returns
 - **leverage_effect** — corr(r_t, |r_{t+k}|) (negative for equities)
 - **cross_correlation** — contemporaneous cross-asset correlation
 
-### Calibration (15%)
-- **pit_uniformity** — KS test on probability integral transforms
-- **crps** — continuous ranked probability score
-- **coverage_50 / 90 / 95** — empirical vs nominal interval coverage
+### Joint (10%)
+- **c2st** *(gate)* — Classifier Two-Sample Test: train a classifier to tell synthetic from real; ~0.5 accuracy = indistinguishable. An omnibus that catches joint-distribution defects the per-axis metrics miss.
 
-### Path-level (8%)
-- **drawdown_distribution** — KS test on max drawdown distribution
+### Conditional (22%)
+- **regime_conditional** — regime-conditional distributional fidelity: paths bucketed into low/mid/high realized-vol regimes (tercile edges from the real paths) and scored on stress-path frequency + within-regime shape.
+- **conditional_sensitivity** *(gate)* — regime-stratified energy-distance ratio: does the forecast distribution actually *move* across vol/trend regimes, or is the model a calibrated **climatology** that ignores the conditioning? The pooled lenses are blind to this.
+- **pit_uniformity** / **crps** / **coverage_50/90/95** *(coverage_deficit is a gate)* — per-observation forecast-distribution calibration.
 
-### Conditional (12%)
-- **regime_conditional** — regime-conditional distributional fidelity: paths are bucketed into low/mid/high realized-volatility regimes (tercile edges taken from the real paths) and scored on both the *frequency* of stress paths (regime mass) and the within-regime return shape. Every pooled metric can pass while a generator under-produces or under-disperses the high-vol regime — the exact failure that underprices options in a stress regime.
+### Generative (20%)
+- **Naeem density / coverage** — manifold realism scored as the **delta vs a block-bootstrap replay** of the real data (a generator must beat replay to justify itself, not merely tie it). Surfaces `coverage_deficit` *(gate)* + `plausibility_deficit`.
 
-### Memorization (5%)
-- **memorization** — data-copying diagnostic: compares synth→real nearest-neighbor distances against real→real (leave-one-out) NN distances. A memorizing generator places samples on top of real points (ratio → 0) yet scores perfectly on every other metric, so this needs its own axis. Pass the *training* set as `real` for a true test.
+### Hard gates (fail outright, regardless of the weighted score)
+`memorization` (data-copying: synth→real vs real→real NN distances — pass the *training* set as `real`), `tail_quantiles`, `tail_dependence_lower`, `drawdown_distribution`, `conditional_sensitivity`, `c2st`, `coverage_deficit`.
 
 ## Baselines
 
@@ -171,6 +179,14 @@ for name, syn in [("gaussian", gauss), ("iid", boot)]:
 
 ## Changelog
 
+- **0.4.0** — Scoring reorganized into **6 weighted lenses** (marginal 0.15,
+  dependence 0.20, temporal 0.13, joint 0.10, conditional 0.22, generative 0.20)
+  + **7 hard gates**. New: `conditional_sensitivity` (regime-stratified — catches a
+  climatological generator whose forecast ignores the conditioning), a **generative**
+  lens (Naeem density/coverage vs a block-bootstrap *replay* baseline), a **joint**
+  `c2st` omnibus, and **graceful degradation** (metrics flagged non-`applicable` on
+  thin-data / long-horizon inputs instead of scored as failures). `validate_full(...)`
+  is the all-lenses entry point.
 - **0.3.0** — Two new dependence metrics: `tail_dependence_asymmetry`
   (scores whether synthetic paths reproduce the real lower-vs-upper
   tail-dependence asymmetry `A = λ_L − λ_U` that elliptical/Gaussian
