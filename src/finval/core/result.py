@@ -36,6 +36,16 @@ class MetricResult:
         per_feature: Per-feature breakdown (optional).
         per_pair: Per-pair breakdown for dependence metrics (optional).
         metadata: Additional metric-specific information.
+        effective_n: Number of independent REAL (sub)windows the metric was
+            computed on — the reference sample size that bounds its statistical
+            power. v0.5.0. ``None`` until stamped by the entry point that ran
+            the metric (the metric functions don't set it). For path metrics
+            this is ``n_real_paths`` (or ``n_real_paths * (H // W)`` under the
+            opt-in ``subwindow=W`` mode); for flat metrics it is the flattened
+            real row count. NOTE: finval reports the count it was *given*. If the
+            caller passes OVERLAPPING real windows, the truly-independent N is
+            lower than ``effective_n`` — guaranteeing independence is the
+            caller's responsibility, not the library's.
     """
 
     name: str
@@ -50,6 +60,8 @@ class MetricResult:
     per_feature: dict[str, Any] = field(default_factory=dict)
     per_pair: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # v0.5.0: independent-real-sample count (see attribute docstring above).
+    effective_n: int | None = None
     # False = the property could NOT be measured on this data (e.g. the regimes don't
     # separate the real outcomes, so conditional-sensitivity is undefined) — as opposed
     # to "measured and poor". An inapplicable metric must NEVER gate or score as a model
@@ -114,6 +126,8 @@ class MetricResult:
             "category": self.category,
             "interpretation": self.interpretation,
         }
+        if self.effective_n is not None:
+            out["effective_n"] = self.effective_n
         if self.ci_low is not None:
             out["ci_low"] = self.ci_low
             out["ci_high"] = self.ci_high

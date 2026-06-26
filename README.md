@@ -12,8 +12,11 @@ forecast calibration.
 **[FinBench](https://github.com/sablier-ai/finbench)**, the public
 leaderboard for multivariate financial time-series generation.
 
-> **Current release: `0.4.0`** (`0.2.0`/`0.3.0` preserved at their tags for
-> reproducibility). 0.4.0 reorganizes scoring into **6 weighted lenses** —
+> **Current release: `0.5.0`** (`0.2.0`/`0.3.0`/`0.4.0` preserved at their tags
+> for reproducibility). 0.5.0 adds an **opt-in `subwindow` mode** for long-horizon
+> path validation plus a per-metric **`effective_n`**, both purely additive — the
+> default (`subwindow=None`) is **byte-identical to 0.4.0**, so existing FinBench
+> scores do not move. The 0.4.0 scoring structure is unchanged: **6 weighted lenses** —
 > marginal (0.15), dependence (0.20), temporal (0.13), joint (0.10),
 > **conditional (0.22)** and **generative (0.20)** — plus **7 hard gates** that
 > fail a model outright regardless of the weighted score (`memorization`,
@@ -193,6 +196,24 @@ for name, syn in [("gaussian", gauss), ("iid", boot)]:
 
 ## Changelog
 
+- **0.5.0** — Opt-in **sub-window validation** + per-metric **`effective_n`**, both
+  purely additive: the default (`subwindow=None`) is **byte-identical to 0.4.0**, so
+  existing scores do not move. `validate_paths(...)` and `validate_full(...)` gain a
+  keyword-only `subwindow=W` argument. When set (and `path_length > W`), the
+  short/medium-scale path metrics are scored on **non-overlapping W-length sub-windows**
+  of the long paths (`(n, H, f) → (n*(H//W), W, f)`, dropping the `H % W` remainder),
+  giving many more independent samples — and so more statistical **power** — at long
+  horizons (e.g. H=252) where a full-horizon path functional otherwise has only a
+  handful of independent episodes. Genuinely full-horizon metrics
+  (`long_memory`, `variance_term_structure`, `signature_distance`, `memorization`) stay
+  on the full paths; flat metrics are unchanged (flattening is invariant to
+  sub-windowing). Every `MetricResult` now carries **`effective_n`** — the number of
+  independent **real** (sub)windows it was computed on (`n_real_paths` for
+  full-horizon/default path metrics, `n_real_paths * (H // W)` for sub-windowed ones,
+  the flattened real row count for flat metrics) — the reference sample size that bounds
+  the metric's power. NOTE: `effective_n` is the count finval was *given*; if the caller
+  passes **overlapping** real windows the truly-independent N is lower (independence is
+  the caller's responsibility).
 - **0.4.0** — Scoring reorganized into **6 weighted lenses** (marginal 0.15,
   dependence 0.20, temporal 0.13, joint 0.10, conditional 0.22, generative 0.20)
   + **7 hard gates**. New: `conditional_sensitivity` (regime-stratified — catches a

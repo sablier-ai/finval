@@ -128,6 +128,45 @@ CALIBRATION_METRICS = (
     "coverage_95",
 )
 
+# v0.5.0 — opt-in SUB-WINDOW validation.
+#
+# At long horizons (e.g. H=252) the path metrics whose statistic is a full-horizon path
+# FUNCTIONAL have very few INDEPENDENT samples (~24 year-episodes in 26yr of paths), so they
+# are low-power. The opt-in ``subwindow=W`` mode scores the short/medium-scale path metrics on
+# NON-OVERLAPPING W-length sub-windows of the long paths (reshape (n, H, f) -> (n*(H//W), W, f),
+# dropping the H % W remainder), giving many more samples → power. The metrics below are kept on
+# the FULL paths because their MEANING requires the full horizon — sub-windowing would either
+# break them or change what they measure:
+#
+#   - long_memory              : compares the |returns| ACF at LONG lags (default 20, 50, 100).
+#                                A W-sub-window (W typically << 100) cannot support those lags;
+#                                its long-memory statistic is a different, shorter-range object.
+#   - variance_term_structure  : the variance scaling of h-step CUMULATIVE returns ACROSS the
+#                                whole horizon h=1..H — a term-structure across many horizons that
+#                                is undefined past W if the path is chopped at W.
+#   - signature_distance       : a truncated path-LAW (level-2 signature) of the full trajectory;
+#                                the path-ordering / lead-lag law it captures is a property of the
+#                                whole path, not of independent sub-segments.
+#   - memorization             : a data-COPYING / privacy diagnostic whose unit of leakage is the
+#                                FULL generated path (each path standardized + flattened to one
+#                                vector, then nearest-neighbor vs the real set). Splitting a path
+#                                into sub-windows would test sub-segment copying, not path copying,
+#                                and change the vector dimension the NN distances live in — so the
+#                                privacy unit must stay the full path.
+#
+# All OTHER path metrics (acf_returns, volatility_clustering, leverage_effect, cross_correlation,
+# drawdown_distribution, regime_conditional, extreme_clustering, time_reversal_asymmetry,
+# regime_persistence, aggregational_gaussianity, conditional_heavy_tails) are short/medium-scale
+# and are run on the W-sub-windows — exactly the metrics whose power the sub-window mode lifts.
+# (acf_returns uses lags up to 20, so W should be >= ~25 for it to remain applicable; if W is too
+# short it gracefully returns a not-applicable/error result rather than a wrong score.)
+FULL_HORIZON_METRICS = (
+    "long_memory",
+    "variance_term_structure",
+    "signature_distance",
+    "memorization",
+)
+
 
 def _run_flat_metrics(
     synthetic: np.ndarray,
@@ -280,6 +319,29 @@ def _run_calibration_metrics(
     return results
 
 
+def _stamp_effective_n(results: dict[str, MetricResult], n: int) -> None:
+    """Stamp ``effective_n = n`` on every result in ``results`` (v0.5.0).
+
+    ``effective_n`` is the number of independent REAL (sub)windows the metric was computed
+    on — the reference-sample count that bounds its statistical power. finval reports the
+    count it was GIVEN; if the caller supplied OVERLAPPING real windows the truly-independent
+    N is lower (independence is the caller's responsibility, not the library's).
+    """
+    for m in results.values():
+        m.effective_n = n
+
+
+def _subwindow(arr: np.ndarray, w: int) -> np.ndarray:
+    """Reshape (n, H, f) paths into (n * (H // W), W, f) NON-OVERLAPPING sub-windows.
+
+    Drops the trailing ``H % W`` remainder. Used by the opt-in ``subwindow`` mode to score
+    short/medium-scale path metrics on many more (independent) samples at long horizons.
+    """
+    n, H, f = arr.shape
+    nb = H // w
+    return arr[:, : nb * w, :].reshape(n * nb, w, f)
+
+
 def _resolve_metrics(metrics: str | list[str] | None) -> set[str]:
     """Resolve a metrics selector to a concrete set of metric names."""
     if metrics is None or metrics == "all":
@@ -353,6 +415,8 @@ def validate(
 
     include = _resolve_metrics(metrics) & set(FLAT_METRICS)
     results = _run_flat_metrics(synthetic, real, feature_names, include)
+    # v0.5.0: flat metric → independent N is the real row count.
+    _stamp_effective_n(results, int(real.shape[0]))
     return _build_report(results, weights)
 
 
@@ -363,6 +427,8 @@ def validate_paths(
     metrics: str | list[str] | None = "all",
     weights: dict[str, float] | None = None,
     include_flat: bool = True,
+    *,
+    subwindow: int | None = None,
 ) -> ValidationReport:
     """Validate path-level synthetic data against real paths.
 
@@ -380,6 +446,21 @@ def validate_paths(
         metrics: Which metrics to run ("all" or list).
         weights: Override default weights.
         include_flat: If True, also run flat metrics on reshaped data.
+        subwindow: Opt-in SUB-WINDOW mode (v0.5.0). ``None`` (default) is the
+            original behavior, byte-identical to v0.4.0 — do not pass it unless
+            you want the new mode. When set to an int ``W`` AND ``path_length > W``,
+            every short/medium-scale path metric is scored on NON-OVERLAPPING
+            W-length sub-windows of the paths (reshape ``(n, H, f) ->
+            (n*(H//W), W, f)``, dropping the ``H % W`` remainder), which gives
+            many more independent samples and so more statistical power at long
+            horizons. Genuinely full-horizon metrics (``FULL_HORIZON_METRICS``:
+            ``long_memory``, ``variance_term_structure``, ``signature_distance``,
+            ``memorization``) stay on the full paths. Flat metrics are unchanged
+            (flattening is invariant to sub-windowing). Each result carries an
+            ``effective_n`` = the count of independent REAL (sub)windows it was
+            computed on. NOTE: that count is the one finval was GIVEN — if the
+            real paths are overlapping windows, the true independent N is lower
+            (independence is the caller's responsibility).
 
     Returns:
         ValidationReport.
@@ -399,17 +480,44 @@ def validate_paths(
     requested = _resolve_metrics(metrics)
     results: dict[str, MetricResult] = {}
 
-    # Path-level metrics
+    n_real = int(real_paths.shape[0])
+    H = int(real_paths.shape[1])
     path_include = requested & set(PATH_METRICS)
-    results.update(_run_path_metrics(synthetic_paths, real_paths, feature_names, path_include))
 
-    # Flat metrics on reshaped data
+    use_subwindow = subwindow is not None and H > subwindow
+    if use_subwindow:
+        # FULL_HORIZON metrics on the full paths; everything else on W-sub-windows.
+        full_include = path_include & set(FULL_HORIZON_METRICS)
+        sub_include = path_include - set(FULL_HORIZON_METRICS)
+
+        full_res = _run_path_metrics(synthetic_paths, real_paths, feature_names, full_include)
+        _stamp_effective_n(full_res, n_real)  # full-horizon → 1 sample per real path
+        results.update(full_res)
+
+        nb = H // subwindow  # number of non-overlapping sub-windows per path
+        syn_sub = _subwindow(synthetic_paths, subwindow)
+        real_sub = _subwindow(real_paths, subwindow)
+        sub_res = _run_path_metrics(syn_sub, real_sub, feature_names, sub_include)
+        _stamp_effective_n(sub_res, n_real * nb)  # n_real_paths * (H // W) sub-windows
+        results.update(sub_res)
+    else:
+        # Default (byte-identical to v0.4.0): all path metrics on the full paths.
+        path_res = _run_path_metrics(synthetic_paths, real_paths, feature_names, path_include)
+        _stamp_effective_n(path_res, n_real)
+        results.update(path_res)
+
+    # Flat metrics on reshaped data. Unchanged by subwindow mode: the flatten
+    # `reshape(-1, n_features)` is invariant to non-overlapping sub-windowing
+    # (it produces the same rows in the same order either way), so the flat
+    # metrics — and their effective_n — are identical with or without `subwindow`.
     if include_flat:
         flat_include = requested & set(FLAT_METRICS)
         if flat_include:
             syn_flat = synthetic_paths.reshape(-1, synthetic_paths.shape[2])
             real_flat = real_paths.reshape(-1, real_paths.shape[2])
-            results.update(_run_flat_metrics(syn_flat, real_flat, feature_names, flat_include))
+            flat_res = _run_flat_metrics(syn_flat, real_flat, feature_names, flat_include)
+            _stamp_effective_n(flat_res, int(real_flat.shape[0]))  # flat → real row count
+            results.update(flat_res)
 
     return _build_report(results, weights)
 
@@ -630,6 +738,7 @@ def validate_full(
     generative: bool = True,
     baseline_block: int = 20,
     seed: int = 42,
+    subwindow: int | None = None,
 ):
     """Comprehensive multi-lens scorer (v0.4.0) — runs every entry point applicable to the
     inputs given and assembles a per-lens vector + overall + hard gates.
@@ -643,6 +752,11 @@ def validate_full(
     a *different, more complete* number than a pooled ``ValidationReport.overall_score``; any
     "poor" hard gate sets ``gated`` and forces ``overall_quality`` to "poor".
 
+    ``subwindow`` (v0.5.0): opt-in sub-window mode forwarded to the pooled ``validate_paths``
+    call for 3D ``(synthetic, real)`` path inputs — see ``validate_paths``. ``None`` (default)
+    is byte-identical to v0.4.0. Ignored for 2D pooled input and for the calibration/conditional
+    lenses (those have no path horizon to sub-window).
+
     Model-agnostic: it only ever sees arrays.
     """
     from finval.core.result import FullReport
@@ -654,7 +768,10 @@ def validate_full(
     if synthetic is not None and real is not None:
         syn = np.asarray(synthetic)
         rl = np.asarray(real)
-        pooled = (validate_paths if syn.ndim == 3 else validate)(syn, rl, feature_names=feature_names)
+        if syn.ndim == 3:
+            pooled = validate_paths(syn, rl, feature_names=feature_names, subwindow=subwindow)
+        else:
+            pooled = validate(syn, rl, feature_names=feature_names)
         metrics.update(pooled.metrics)
         if generative:
             metrics.update(

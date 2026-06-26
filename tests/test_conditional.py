@@ -93,7 +93,7 @@ def test_default_validate_does_not_run_new_metrics():
 
 
 def test_version_bumped():
-    assert finval.__version__ == "0.4.0"
+    assert finval.__version__ == "0.5.0"
 
 
 def test_multi_axis_catches_partial_conditioning():
