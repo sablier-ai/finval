@@ -37,11 +37,22 @@ dependence coefficients. For financial applications — risk management,
 backtesting, derivatives — you need a suite that tests the things that
 actually matter for market data.
 
-`finval` ships **26 scored metrics across 6 weighted lenses** (marginal,
-dependence, temporal, joint, conditional, generative) **+ 7 hard gates +
-diagnostic localizers**, each with thresholds calibrated against real financial
-data and justified by the statistical literature. They split across three entry
-points by input shape:
+We're not aware of another library that combines, for financial time series, the
+full stylized-fact battery (fat tails, volatility clustering, leverage effect,
+crash co-movement, **time-irreversibility**, long memory, aggregational
+gaussianity) with a path-law **signature** metric, a **C2ST** omnibus,
+proper-scoring calibration (CRPS / PIT / coverage), **regime-conditional**
+sensitivity, and **memorization** gating against a real-vs-real baseline — in one
+weighted, gated battery.
+
+`finval` computes **35 metric functions** for synthetic financial time series:
+**26 carry weight** across 6 lenses (marginal, dependence, temporal, joint,
+conditional, generative); the balance are **weight-0 diagnostic localizers** —
+computed and reported so they pinpoint *where* a defect is without destabilizing
+the headline score, and including a **path-signature** path-law metric — and
+**7 hard gates** fail a model outright regardless of the weighted score. Every
+threshold is calibrated against real financial data and justified by the
+statistical literature. The metrics split across three entry points by input shape:
 
 - **11 flat metrics** — 3 distributional (`marginal_ks`,
   `energy_distance`, `tail_quantiles`) and 8 dependence (`pearson_corr`,
@@ -59,11 +70,14 @@ points by input shape:
   `coverage_90`, `coverage_95`) — run by `validate_calibration(...)` on
   per-observation forecast distributions paired with realized actuals.
 
-Implementation note: the 23 weighted metrics come from **20 underlying
-compute functions** producing **23 individual numeric outputs** —
-`compute_tail_dependence` returns upper + lower (2 scores) and
-`compute_coverage` returns the three levels (3 scores). Every output is
-weighted into `overall_score`.
+Implementation note: **26 metrics carry weight** in `overall_score` (across the
+6 lenses), drawn from a larger surface of **35 compute functions**. The balance
+are **weight-0 localizers** — e.g. `signature_distance` (level-2 truncated
+path-signature distance), `time_reversal_asymmetry`, `aggregational_gaussianity`,
+`long_memory`, `coskewness` — computed and reported, but kept out of the weighted
+aggregate because they are lower-power, so a noisy metric can flag a defect
+without swinging the score. Some compute functions emit multiple outputs
+(`compute_tail_dependence` → upper + lower; `compute_coverage` → three levels).
 
 ## Installation
 
