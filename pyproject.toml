@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [
-    { name = "Sablier", email = "hello@sablier.it" },
+    { name = "Sablier", email = "hello@sablier.ai" },
 ]
 keywords = [
     "finance",
